@@ -78,12 +78,7 @@ impl PdfDocument {
                 bg_color: WHITE,
             },
         );
-        // 背景が不透明な白なのでpremultipliedでもstraightでも値は同じ。
-        Ok(RenderedPage {
-            width: u32::from(pixmap.width()),
-            height: u32::from(pixmap.height()),
-            rgba: pixmap.data_as_u8_slice().to_vec(),
-        })
+        Ok(RenderedPage::from_pixmap(&pixmap))
     }
 
     fn page(&self, index: usize) -> Result<&Page<'_>, PdfError> {
