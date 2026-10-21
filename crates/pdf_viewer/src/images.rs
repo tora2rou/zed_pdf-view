@@ -177,12 +177,17 @@ pub fn settle_remaining(elapsed: Duration) -> Option<Duration> {
 /// 表示範囲の前後に先読みするページ数。
 pub const PREFETCH_PAGES: usize = 1;
 
-/// 表示中の範囲`visible`を、先読み分だけ広げた範囲(`page_count`を超えない)。
-pub fn with_prefetch(visible: &Range<usize>, page_count: usize) -> Range<usize> {
+/// 表示中の範囲`visible`を、前後に`margin`ページずつ広げた範囲(`page_count`を超えない)。
+pub fn with_margin(visible: &Range<usize>, margin: usize, page_count: usize) -> Range<usize> {
     if visible.is_empty() {
         return visible.clone();
     }
-    visible.start.saturating_sub(PREFETCH_PAGES)..(visible.end + PREFETCH_PAGES).min(page_count)
+    visible.start.saturating_sub(margin)..(visible.end + margin).min(page_count)
+}
+
+/// 本文用: 表示中の範囲を先読み分だけ広げた範囲。
+pub fn with_prefetch(visible: &Range<usize>, page_count: usize) -> Range<usize> {
+    with_margin(visible, PREFETCH_PAGES, page_count)
 }
 
 #[cfg(test)]
@@ -337,6 +342,14 @@ mod tests {
         );
         assert_eq!(settle_remaining(ZOOM_SETTLE), None);
         assert_eq!(settle_remaining(Duration::from_secs(1)), None);
+    }
+
+    #[test]
+    fn margin_extends_the_range_within_bounds() {
+        assert_eq!(with_margin(&(10..12), 4, 100), 6..16);
+        assert_eq!(with_margin(&(1..3), 4, 100), 0..7);
+        assert_eq!(with_margin(&(98..100), 4, 100), 94..100);
+        assert_eq!(with_margin(&(5..5), 4, 100), 5..5);
     }
 
     #[test]

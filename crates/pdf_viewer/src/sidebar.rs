@@ -6,7 +6,7 @@ use gpui::{
 
 use crate::{
     actions::ToggleSidebar,
-    images::{Lookup, RenderMode, with_prefetch},
+    images::{Lookup, RenderMode, with_margin},
     layout::{self, MARGIN},
     outline_rows::{self, OutlineRow},
     view::{PdfView, RenderRequest, RenderTarget},
@@ -25,6 +25,9 @@ const OUTLINE_TOGGLE_WIDTH: f32 = 34.0;
 /// 行の左端の余白。
 const OUTLINE_ROW_PADDING: f32 = 4.0;
 const OUTLINE_INDENT: f32 = 14.0;
+/// 見えているサムネイルの前後に、描画しておく(捨てずに持っておく)ページ数。
+/// サムネイルは小さくて軽いので、本文より多めに持ち、速くスクロールして戻っても空白を見せない。
+const THUMB_MARGIN_PAGES: usize = 6;
 
 const BACKGROUND: u32 = 0x2b2b2b;
 const TAB_BACKGROUND: u32 = 0x252525;
@@ -33,6 +36,8 @@ const MUTED_TEXT: u32 = 0x999999;
 const HOVER: u32 = 0x3a3a3a;
 const ACTIVE: u32 = 0x4a4a4a;
 const ACCENT: u32 = 0x4d9bff;
+/// サムネイルの画像が届くまでの枠の色。
+const THUMB_PLACEHOLDER: u32 = 0x3a3a3a;
 
 /// サイドバーに出す内容。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -185,7 +190,7 @@ impl PdfView {
         let scroll_top =
             layout.clamp_scroll_top(-f32::from(self.thumb_scroll.offset().y), viewport_height);
         let visible = layout.visible_range(scroll_top, viewport_height);
-        let keep = with_prefetch(&visible, self.page_sizes.len());
+        let keep = with_margin(&visible, THUMB_MARGIN_PAGES, self.page_sizes.len());
         for old in self.thumbs.retain(&keep) {
             window.drop_image(old).ok();
         }
@@ -223,13 +228,13 @@ impl PdfView {
                 .w(px(rect.width))
                 .h(px(image_height))
                 .border_2()
-                .border_color(rgb(if is_current { ACCENT } else { BACKGROUND }))
-                .bg(rgb(0xffffff));
+                .border_color(rgb(if is_current { ACCENT } else { BACKGROUND }));
+            // 画像が届くまでは、白でなく暗い灰色の枠を出す(白だと、画像が現れるときに点滅して見える)。
             let picture = match self.thumbs.lookup(index, &key) {
                 Lookup::Fresh(image) | Lookup::Stale(image) => {
-                    picture.child(img(image).size_full())
+                    picture.bg(rgb(0xffffff)).child(img(image).size_full())
                 }
-                Lookup::Failed(_) | Lookup::Missing => picture,
+                Lookup::Failed(_) | Lookup::Missing => picture.bg(rgb(THUMB_PLACEHOLDER)),
             };
             content = content.child(
                 div()
