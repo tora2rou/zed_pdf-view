@@ -3,7 +3,7 @@
 use gpui::{ClickEvent, Context, MouseButton, SharedString, Stateful, div, prelude::*, px, rgb};
 
 use crate::{
-    actions::{NextPage, PreviousPage},
+    actions::{NextPage, PreviousPage, ZoomIn, ZoomOut},
     view::PdfView,
     zoom::ZoomMode,
 };
@@ -95,17 +95,13 @@ impl PdfView {
                 |this, _: &ClickEvent, window, cx| this.next_page(&NextPage, window, cx),
             )))
             .child(div().w(px(16.0)))
-            .child(button("zoom-out", "−", false).on_click(cx.listener(
-                |this, _: &ClickEvent, window, cx| {
-                    this.zoom_out(&crate::actions::ZoomOut, window, cx)
-                },
-            )))
+            .child(button("zoom-out", "−", false).on_click(
+                cx.listener(|this, _: &ClickEvent, window, cx| this.zoom_out(&ZoomOut, window, cx)),
+            ))
             .child(div().w(px(48.0)).flex().justify_center().child(zoom_label))
-            .child(button("zoom-in", "+", false).on_click(cx.listener(
-                |this, _: &ClickEvent, window, cx| {
-                    this.zoom_in(&crate::actions::ZoomIn, window, cx)
-                },
-            )))
+            .child(button("zoom-in", "+", false).on_click(
+                cx.listener(|this, _: &ClickEvent, window, cx| this.zoom_in(&ZoomIn, window, cx)),
+            ))
             .child(div().w(px(16.0)))
             .child(
                 button("fit-width", "Width", mode == ZoomMode::FitWidth).on_click(cx.listener(
