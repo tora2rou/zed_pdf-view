@@ -1,4 +1,5 @@
 mod app_window;
+mod recent;
 mod resize;
 mod titlebar;
 
