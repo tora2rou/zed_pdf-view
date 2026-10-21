@@ -28,3 +28,12 @@ Zed向けGPUI製PDFビューアの開発過程を記録する。
   - キャッシュは枚数ベース (既定16枚、`set_cache_capacity` で変更)。メモリ量ベースへの変更は必要になってから検討する。
 - テスト用PDF (`tests/fixtures/two_pages.pdf`) は手書き生成。A4と300x200の2ページで、フォント不要。
 - テスト13件、clippy警告なし。
+
+## ③ pdf_viewer (1ページ表示)
+- gpui は `rev = fae8a35...` 固定で依存に追加。初回の `cargo check` は約4.5分。リンクまで通る (`cargo test -p pdf_viewer` 成功) ので、システムライブラリは足りている。
+- GPUIの `RenderImage` は **BGRA** (中身は `image::Frame` / `RgbaImage`) なので、`to_render_image` でR/Bを入れ替えている。`image` crate (default-features off) を直接依存に追加。
+- `RenderImage::scale_factor` は `pub(crate)` で変更できない。→ 画像はウィンドウのDPI(`window.scale_factor()`) × ズームの解像度で描画し、`img().w().h()` で論理サイズを明示して表示する。HiDPIでもぼやけない。
+- `RenderImage` は生成のたびに新しい `ImageId` を持ち、GPUにアップロードされる。毎フレーム作り直さないよう `PdfView` が (ページ, 倍率) をキーに保持し、変わった時だけ作り直す。古い画像は `window.drop_image` でアトラスから破棄する。
+- Zed組み込みを見据え、`PdfView::new(Arc<PdfDocument>, cx)` はファイルI/Oを持たない。`image_viewer` の `Item` 実装は、組み込み時に別途ラップする想定。
+- 描画エラー(範囲外など)はビュー内にテキスト表示する。
+- 変換関数のテスト3件。`Render` は目視確認が必要なので ④ で確認する。
