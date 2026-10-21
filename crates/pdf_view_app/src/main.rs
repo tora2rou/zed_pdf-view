@@ -1,4 +1,9 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, process::ExitCode, sync::Arc};
+
+use gpui::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui_platform::application;
+use pdf_core::PdfDocument;
+use pdf_viewer::PdfView;
 
 const USAGE: &str = "使い方: pdf_view_app <file.pdf>";
 
@@ -11,7 +16,42 @@ fn pdf_path_from_args(mut args: impl Iterator<Item = String>) -> Result<PathBuf,
     Ok(PathBuf::from(path))
 }
 
-fn main() {}
+fn open_window(document: Arc<PdfDocument>, title: String, cx: &mut App) {
+    let bounds = Bounds::centered(None, size(px(900.), px(1000.)), cx);
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(gpui::TitlebarOptions {
+            title: Some(title.into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    cx.open_window(options, |_, cx| cx.new(|cx| PdfView::new(document, cx)))
+        .expect("ウィンドウを開けませんでした");
+    cx.activate(true);
+}
+
+fn main() -> ExitCode {
+    let path = match pdf_path_from_args(std::env::args().skip(1)) {
+        Ok(path) => path,
+        Err(message) => {
+            eprintln!("{message}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let document = match PdfDocument::open(&path) {
+        Ok(document) => Arc::new(document),
+        Err(e) => {
+            eprintln!("{}: {e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let title = path
+        .file_name()
+        .map_or_else(|| "PDF".into(), |n| n.to_string_lossy().into_owned());
+    application().run(move |cx: &mut App| open_window(document, title, cx));
+    ExitCode::SUCCESS
+}
 
 #[cfg(test)]
 mod tests {
