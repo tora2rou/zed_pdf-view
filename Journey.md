@@ -345,3 +345,26 @@ Zed向けGPUI製PDFビューアの開発過程を記録する。
 - 文字が画像のページ (スキャンPDF) は、文字が無いので選択できない。
 - 擬似太字の除去は、ほぼ同じ位置・同じ文字だけを対象にする (少しずらして別の太さで描いたものなどは残ることがある)。
 - ドラッグ選択の語単位・行単位の拡張 (ダブルクリック後にドラッグして語ごとに広げる) は未実装。
+
+## Windowsのネイティブアプリ化 (`windows-exe` ブランチ)
+ユーザーの希望: デスクトップアプリのようにしたい → WSLのアプリとしての統合 (A) ではなく、Windowsのネイティブな exe (B)。exe用のブランチを切って作業する。表示名は最初「Spider」(蜘蛛の巣のアイコン) の指定だったが、作業中に「**Chihayaburu**」(**かるた**のアイコン) に変更された。
+
+### 調べて分かったこと
+- 今のコードは、そのままWindows向けにコンパイルできた。WSLから `cargo check --target x86_64-pc-windows-msvc` (と clippy) が、エラーも警告もなく通る。
+  - ただし、GPUIのビルドスクリプトは、Windowsのリソース (マニフェスト) を埋め込むために `llvm-rc` を必要とする。WSLでは `/usr/lib/llvm-18/bin` を `PATH` に足すと通った。リンク (exeの生成) まではWSLからはできない (MSVCのリンカとWindows SDKが要る) ので、実際のビルドはWindowsで行う。
+- Windows版GPUIは、ウィンドウのアイコンに **exe に埋め込まれたID 1のアイコン** を使う (`LoadImageW(module, 1, IMAGE_ICON)`)。`winresource` の `set_icon` で埋め込めば、ウィンドウ・タスクバー・エクスプローラーの表示が揃う。
+- Windowsでは `window_decorations()` が `Server` になるので、自前のタイトルバーは出ず、OS標準のタイトルバー (スナップなど込み) になる。ファイル選択ダイアログ、URLを開く操作、最近のファイルの保存先 (`%APPDATA%`) も、Windows標準のものに自動で切り替わる。
+
+### 実装
+- **アイコン** (`crates/pdf_view_app/assets/chihayaburu.ico`): 赤い札の上に、深緑の縁の生成りの取り札、明朝体の「ち」(ちはやぶる)。PIL が無かったので、プロジェクトで使っている `skrifa` (フォントの輪郭) と `vello_cpu` (描画) で描く小さなツールを書いた (`packaging/icon/`、ワークスペースとは独立)。16〜256pxを描き分け、48px以下では細い明朝の線が消えないよう、文字を大きくして輪郭をなぞって太らせた (拡大プレビューで目視して調整)。PNGのまま格納した `.ico` を `make_ico.py` で作る。文字の形は IPAex明朝 (IPAフォントライセンス) から。
+- **exeへの埋め込み** (`build.rs`): Windows上でWindows向けにビルドするときだけ、`winresource` でアイコンと製品情報 (ProductName など) を埋め込む。ビルドスクリプトはホストで動くので、`#[cfg(windows)]` と `CARGO_CFG_TARGET_OS` の両方で判定する。`winresource` は `[target.'cfg(windows)'.build-dependencies]`。
+- **表示名**: ウィンドウのタイトルは「ファイル名 - Chihayaburu」、ファイル未選択時は「Chihayaburu」。
+- **コンソールを出さない**: releaseビルドでは `windows_subsystem = "windows"` (デバッグビルドはコンソール付きのまま、ログを見られる)。
+- **起動時のエラー**: これまでは、起動時に渡されたファイルが開けないと、標準エラーに出して終了していた。コンソールが無いと何も分からないので、ウィンドウを開いて上部の帯にエラーを出すように変えた (Linuxでも同じ動作。標準エラーへの出力は残す)。
+- **インストール** (`packaging/windows/install.ps1` / `uninstall.ps1`): 管理者権限なし、すべてユーザー単位 (HKCU)。exe を `%LOCALAPPDATA%\Programs\Chihayaburu\Chihayaburu.exe` にコピー、スタートメニューにショートカット、ProgID `Chihayaburu.pdf` と `.pdf` の OpenWithProgids、`Applications\Chihayaburu.exe`、`RegisteredApplications` (設定の「既定のアプリ」に出す) を登録し、`SHChangeNotify` でエクスプローラーに知らせる。Windows 10/11 は、アプリが自分で既定のアプリになることを許していない (UserChoice のハッシュで保護されている) ので、最初の1回だけユーザーが「常に使う」を選ぶ。
+  - **見つけた問題**: スクリプトをWSLから `powershell.exe` のパーサだけで読ませて構文を確かめたところ (実行はしない)、日本語の部分で構文エラーになった。Windows PowerShell 5.1 は、BOM の無い UTF-8 を Shift_JIS として読むため。BOM 付き UTF-8 で保存し直して、パーサが通ることを確かめた。
+- **手順書** (`docs/windows.md`): 必要なもの (Build Tools の「C++ によるデスクトップ開発」、rustup、Git)、Windows側に clone してビルドすること (WSLのフォルダを直接ビルドしない)、インストール・アンインストール、困ったとき。
+
+### 確認できていないこと (Windowsでの確認待ち)
+- 実際のビルドとリンク、exeのアイコン、起動、PDFを開く・ダブルクリックでの関連付け、インストール/アンインストールのスクリプトの実行。
+- フォント (日本語表示)、HiDPI、ファイル選択ダイアログ、URLを開く操作。
