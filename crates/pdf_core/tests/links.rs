@@ -65,7 +65,9 @@ fn rotated_and_cropped_pages_use_display_coordinates() {
     assert_eq!(
         doc.page_links(2).unwrap(),
         [link(
-            rect(10.0, 30.0, 40.0, 20.0),
+            // クロップ後の表示は160x80。ユーザー空間のy 20..40は、下端(10)を引いて10..30、
+            // 上下を反転して 80 - 30 = 50 から高さ20。xは 30 - 20 = 10 から幅40。
+            rect(10.0, 50.0, 40.0, 20.0),
             uri("http://example.org/crop")
         )]
     );

@@ -102,6 +102,10 @@ fn target_of(annot: &Dict<'_>, dests: Option<&Destinations<'_, '_>>) -> Option<L
 /// `to_display`は`[a b c d e f]`(x' = a·x + c·y + e, y' = b·x + d·y + f)。
 fn display_rect(rect: [f64; 4], to_display: [f64; 6]) -> Option<LinkRect> {
     let [a, b, c, d, e, f] = to_display;
+    // f64::minは片方がNaNだともう片方を返すので、NaNは計算の前に弾く。
+    if rect.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
     let [x0, y0, x1, y1] = rect;
     let corners = [(x0, y0), (x1, y0), (x0, y1), (x1, y1)];
     let mut min = (f64::INFINITY, f64::INFINITY);
