@@ -57,11 +57,16 @@ pub struct PdfView {
     pub(crate) input_focus: FocusHandle,
 }
 
+/// 各ページのPDFポイント単位のサイズ。読み取れないページは0。
+fn page_sizes_of(document: &PdfDocument) -> Vec<(f32, f32)> {
+    (0..document.page_count())
+        .map(|i| document.page_size(i).unwrap_or((0.0, 0.0)))
+        .collect()
+}
+
 impl PdfView {
     pub fn new(document: Arc<PdfDocument>, cx: &mut Context<Self>) -> Self {
-        let base_sizes: Vec<_> = (0..document.page_count())
-            .map(|i| document.page_size(i).unwrap_or((0.0, 0.0)))
-            .collect();
+        let base_sizes = page_sizes_of(&document);
         Self {
             document,
             page_sizes: base_sizes.clone(),
@@ -77,6 +82,26 @@ impl PdfView {
             page_input: None,
             input_focus: cx.focus_handle(),
         }
+    }
+
+    /// 表示する文書を入れ替える。先頭ページに戻り、ズームや回転などの表示設定は引き継ぐ。
+    pub fn set_document(
+        &mut self,
+        document: Arc<PdfDocument>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.images.clear(window);
+        self.base_sizes = page_sizes_of(&document);
+        self.page_sizes = self
+            .base_sizes
+            .iter()
+            .map(|&size| self.appearance.rotation.apply_to_size(size))
+            .collect();
+        self.document = document;
+        self.page_input = None;
+        self.drag = None;
+        self.set_scroll(0.0, 0.0, cx);
     }
 
     pub fn document(&self) -> &Arc<PdfDocument> {

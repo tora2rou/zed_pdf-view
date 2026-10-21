@@ -57,6 +57,13 @@ impl PageImages {
         Ok(image)
     }
 
+    /// 保持している画像をすべて破棄する(文書を入れ替えるとき)。
+    pub fn clear(&mut self, window: &mut Window) {
+        for (_, old) in self.images.drain() {
+            drop_from_gpu(old.image, window);
+        }
+    }
+
     /// `visible`の範囲外のページ画像を破棄する。
     pub fn retain_visible(&mut self, visible: &Range<usize>, window: &mut Window) {
         let hidden: Vec<usize> = self
