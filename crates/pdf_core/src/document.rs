@@ -123,6 +123,12 @@ impl PdfDocument {
         }))
     }
 
+    /// ページ`index`のリンクが、すでに読み込み済みならそれを返す。読み込み中や未読み込みなら`None`で、
+    /// 待たずに戻る(画面を更新するスレッドで、重い読み込みを待たないために使う)。
+    pub fn page_links_if_ready(&self, index: usize) -> Option<&[Link]> {
+        self.links.get(index)?.get().map(Vec::as_slice)
+    }
+
     /// ページ`index`の文字と位置。初回だけ取り出す(ページの解釈が要るので、重いことがある)。
     pub fn page_text(&self, index: usize) -> Result<&PageText, PdfError> {
         let cell = self.texts.get(index).ok_or(PdfError::PageOutOfRange {

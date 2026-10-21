@@ -95,6 +95,8 @@ pub struct PdfView {
     pub(crate) drag: Option<DragState>,
     /// マウスがリンクの上にあるか(カーソルの形を変える)。
     pub(crate) hovering_link: bool,
+    /// リンクの読み込みを、すでにバックグラウンドで始めたページ。
+    pub(crate) links_requested: HashSet<usize>,
     /// 画面下部にしばらく出す短いお知らせ(リンクを開いたことなど)。
     pub(crate) notice: Option<SharedString>,
     pub(crate) notice_task: Option<Task<()>>,
@@ -136,6 +138,7 @@ impl PdfView {
             focus_handle: cx.focus_handle(),
             drag: None,
             hovering_link: false,
+            links_requested: HashSet::new(),
             notice: None,
             notice_task: None,
             page_input: None,
@@ -154,6 +157,7 @@ impl PdfView {
             window.drop_image(old).ok();
         }
         self.outline_expanded.clear();
+        self.links_requested.clear();
         self.thumb_followed_page = None;
         self.base_sizes = page_sizes_of(&document);
         self.page_sizes = self
@@ -637,6 +641,7 @@ impl Render for PdfView {
         let scale = self.zoom * window.scale_factor();
         let key = self.images.key(scale, self.appearance);
         self.request_page_images(&visible, key, scale, now, window, cx);
+        self.request_page_links(&visible, window, cx);
 
         let content = self.render_pages(&layout, visible, &key);
 

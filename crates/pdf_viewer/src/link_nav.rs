@@ -1,6 +1,6 @@
 //! ページ上のリンクのホバー表示とクリックによる移動。
 
-use gpui::{Context, MouseUpEvent, Pixels, Point, Window};
+use gpui::{AppContext as _, Context, MouseUpEvent, Pixels, Point, Window};
 use pdf_core::LinkTarget;
 
 use crate::{
@@ -9,6 +9,29 @@ use crate::{
 };
 
 impl PdfView {
+    /// 見えているページのリンク(注釈と、文字の中のURL)を、バックグラウンドで先に読み込んでおく。
+    /// ページの解釈が要るので、最初にマウスを重ねたときに画面を更新するスレッドで読むと、引っかかる。
+    pub(crate) fn request_page_links(
+        &mut self,
+        visible: &std::ops::Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for index in visible.clone() {
+            if !self.links_requested.insert(index) {
+                continue;
+            }
+            let document = self.document.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                // 結果は文書の側に保存される。ここでは、読み込みを済ませるだけ。
+                cx.background_spawn(async move {
+                    document.page_links(index).ok();
+                })
+                .await;
+            })
+            .detach();
+        }
+    }
     /// ウィンドウ上の位置`position`にあるリンクの移動先。リンクが無ければ`None`。
     pub(crate) fn link_target_at(
         &self,
@@ -30,7 +53,8 @@ impl PdfView {
         let shown = (local_x / self.zoom, local_y / self.zoom);
         let base = *self.base_sizes.get(page)?;
         let (bx, by) = self.appearance.rotation.to_base(base, shown);
-        let links = self.document.page_links(page).ok()?;
+        // まだバックグラウンドで読み込み中のページは、リンクなしとして扱う(待たない)。
+        let links = self.document.page_links_if_ready(page)?;
         link_at(links, bx, by).map(|link| link.target.clone())
     }
 
@@ -113,11 +137,24 @@ mod tests {
     const JAVASCRIPT: usize = 2;
     const MAIL: usize = 4;
 
+    const WITH_TEXT: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../pdf_core/tests/fixtures/with_text.pdf"
+    );
+
     fn open_view(
         cx: &mut TestAppContext,
         zoom: f32,
     ) -> (gpui::Entity<PdfView>, &mut VisualTestContext) {
-        let document = Arc::new(PdfDocument::open(WITH_LINKS).unwrap());
+        open_view_of(WITH_LINKS, cx, zoom)
+    }
+
+    fn open_view_of<'a>(
+        path: &str,
+        cx: &'a mut TestAppContext,
+        zoom: f32,
+    ) -> (gpui::Entity<PdfView>, &'a mut VisualTestContext) {
+        let document = Arc::new(PdfDocument::open(path).unwrap());
         let (view, cx) = cx.add_window_view(|_, cx| PdfView::new(document, cx));
         if zoom != 1.0 {
             view.update_in(cx, |this, _, cx| this.set_zoom(zoom, (0.0, 0.0), cx));
@@ -253,5 +290,38 @@ mod tests {
         let at = link_center(&view, cx, WEB);
         cx.simulate_click(at, Modifiers::none());
         assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/a"));
+    }
+
+    /// 見えているページのリンクは、バックグラウンドで先に読み込まれる(マウスを重ねる前に準備済み)。
+    #[gpui::test]
+    fn visible_pages_links_are_prepared_in_the_background(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx, 1.0);
+        let ready = view.read_with(cx, |this, _| {
+            (0..3)
+                .map(|i| this.document.page_links_if_ready(i).is_some())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(ready, [true, true, true]);
+    }
+
+    /// 注釈の無い、文字だけのURLも、クリックで開ける(ブラウザのPDFビューアと同じ)。
+    #[gpui::test]
+    fn clicking_a_url_in_plain_text_opens_it(cx: &mut TestAppContext) {
+        let (view, cx) = open_view_of(WITH_TEXT, cx, 1.0);
+        let at = view.update_in(cx, |this, window, _| {
+            let rect = this.document.page_links(0).unwrap()[0].rect;
+            let (viewport_width, _) = this.viewport_size(window);
+            let page = this.layout(viewport_width).pages[0];
+            let bounds = this.scroll_handle.bounds();
+            point(
+                bounds.origin.x + px(page.left + rect.x + rect.width / 2.0),
+                bounds.origin.y + px(page.top + rect.y + rect.height / 2.0),
+            )
+        });
+        cx.simulate_click(at, Modifiers::none());
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some("https://example.com/a/doc.pdf")
+        );
     }
 }
