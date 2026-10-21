@@ -26,3 +26,31 @@ cargo run --release -p pdf_view_app -- path/to/file.pdf
 ```sh
 cargo test
 ```
+
+## 依存関係
+
+### ツールチェーン
+- Rust 1.98.1 (edition 2024)。`rust-toolchain.toml` で固定
+
+### 依存crate
+バージョンは `Cargo.toml` の `[workspace.dependencies]` で一括管理している。
+
+| crate | バージョン | 用途 | 使うcrate |
+|---|---|---|---|
+| [hayro](https://crates.io/crates/hayro) | 0.8 | PDFのパースとラスタライズ | pdf_core |
+| [thiserror](https://crates.io/crates/thiserror) | 2 | エラー型の定義 | pdf_core |
+| [lru](https://crates.io/crates/lru) | 0.19 | ページ画像のキャッシュ | pdf_core |
+| [gpui](https://github.com/zed-industries/zed) | git (rev `fae8a35`) | UIフレームワーク | pdf_viewer, pdf_view_app |
+| gpui_platform | git (gpuiと同じrev) | プラットフォーム層 (Linuxは `wayland` / `x11`) | pdf_view_app |
+| [image](https://crates.io/crates/image) | 0.25 (デフォルト機能なし) | 画像データの扱い | pdf_viewer |
+| [log](https://crates.io/crates/log) | 0.4 | ログ出力 | pdf_viewer, pdf_view_app |
+
+gpui と gpui_platform は Zed リポジトリの特定コミットを git から取得する。
+
+### ワークスペース内のcrate
+- `pdf_core`: PDFの読み込み・描画 (hayro に依存)
+- `pdf_viewer`: ビューア部分 (pdf_core, gpui に依存)
+- `pdf_view_app`: 実行ファイル (pdf_core, pdf_viewer, gpui に依存)
+
+### テスト用
+- `gpui` の `test-support` 機能 (pdf_viewer, pdf_view_app の dev-dependencies)
