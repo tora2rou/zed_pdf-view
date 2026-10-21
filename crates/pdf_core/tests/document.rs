@@ -120,7 +120,7 @@ fn uncached_render_matches_cached_and_leaves_the_cache_alone() {
 
     let thumb = doc.render_page_uncached(1, 0.5).unwrap();
     assert_eq!((thumb.width, thumb.height), (150, 100));
-    assert_eq!(*doc.render_page_uncached(0, 1.0).unwrap(), *cached);
+    assert_eq!(doc.render_page_uncached(0, 1.0).unwrap(), *cached);
 
     // キャッシュは容量1なので、キャッシュ付きで別ページを描くと追い出される。
     // キャッシュなしの描画では、ページ0は追い出されない。
