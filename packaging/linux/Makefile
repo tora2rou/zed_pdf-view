@@ -17,11 +17,17 @@ ICON_SIZES := 16 24 32 48 64 128 256
 bindir   = $(DESTDIR)$(PREFIX)/bin
 datadir  = $(DESTDIR)$(PREFIX)/share
 
-.PHONY: install uninstall check
+.PHONY: install install-bin install-data uninstall check
 
-install:
+install: install-bin install-data
+
+install-bin:
 	@test -f "$(BINARY)" || { echo "実行ファイルがありません: $(BINARY) (先に cargo build --release -p pdf_view_app)"; exit 1; }
 	install -Dm755 "$(BINARY)" "$(bindir)/$(NAME)"
+
+# 実行ファイル以外(デスクトップ環境に見せるもの)。Nixのように、実行ファイルを別の方法で
+# 入れるパッケージ形式は、こちらだけを使う。
+install-data:
 	install -Dm644 $(ID).desktop "$(datadir)/applications/$(ID).desktop"
 	install -Dm644 $(ID).metainfo.xml "$(datadir)/metainfo/$(ID).metainfo.xml"
 	for size in $(ICON_SIZES); do \
