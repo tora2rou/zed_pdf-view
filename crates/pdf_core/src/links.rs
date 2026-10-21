@@ -7,7 +7,7 @@ use hayro::hayro_syntax::{
     object::{Array, Dict, Name, Object, ObjectIdentifier, String as PdfString},
 };
 
-use crate::dest::Destinations;
+use crate::{dest::Destinations, linkify::detect_urls, text::PageText};
 
 /// 1ページから読むリンク数の上限。壊れた/悪意あるPDFへの安全弁。
 const MAX_LINKS_PER_PAGE: usize = 10_000;
@@ -48,8 +48,33 @@ pub struct Link {
     pub target: LinkTarget,
 }
 
-/// ページ`index`のリンクを、PDFの記述順に読む。読めないものは飛ばす。
+/// ページ`index`のリンクを読む。リンク注釈をPDFの記述順に、続けて、文字の中のURLのうち
+/// 注釈と重ならないものを並べる。読めないものは飛ばす。`text`はそのページの文字。
 pub(crate) fn read_links(
+    pdf: &Pdf,
+    page_ids: &HashMap<ObjectIdentifier, usize>,
+    index: usize,
+    text: &PageText,
+) -> Vec<Link> {
+    let mut links = read_annotation_links(pdf, page_ids, index);
+    for detected in detect_urls(text) {
+        // 注釈が付いている箇所は、注釈を優先する(同じURLを二重に持たない)。
+        let (cx, cy) = (
+            detected.rect.x + detected.rect.width / 2.0,
+            detected.rect.y + detected.rect.height / 2.0,
+        );
+        if !links
+            .iter()
+            .any(|annotated| annotated.rect.contains(cx, cy))
+        {
+            links.push(detected);
+        }
+    }
+    links
+}
+
+/// ページ`index`のリンク注釈を、PDFの記述順に読む。
+fn read_annotation_links(
     pdf: &Pdf,
     page_ids: &HashMap<ObjectIdentifier, usize>,
     index: usize,

@@ -110,3 +110,73 @@ fn links_are_cached_per_page() {
     let first = doc.page_links(0).unwrap().as_ptr();
     assert_eq!(first, doc.page_links(0).unwrap().as_ptr());
 }
+
+const WITH_TEXT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/with_text.pdf");
+const TEXT_AND_ANNOTATION: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/with_text_and_annotation.pdf"
+);
+
+fn uris(links: &[Link]) -> Vec<&str> {
+    links
+        .iter()
+        .filter_map(|l| match &l.target {
+            LinkTarget::Uri(u) => Some(u.as_str()),
+            LinkTarget::Page(_) => None,
+        })
+        .collect()
+}
+
+/// 注釈が無くても、文字の中のURLがリンクになる(ブラウザのPDFビューアと同じ)。
+#[test]
+fn urls_in_plain_text_become_links() {
+    let doc = PdfDocument::open(WITH_TEXT).unwrap();
+    assert_eq!(
+        uris(doc.page_links(0).unwrap()),
+        [
+            "https://example.com/a/doc.pdf", // 文末のピリオドは含まない
+            "http://example.org/x?y=1",      // 括弧とカンマは含まない
+            "https://www.example.net",       // www. には https:// を補う
+            "mailto:me@example.com",
+        ]
+    );
+}
+
+/// 検出されたリンクの範囲は、そのURLの文字の上にある。
+#[test]
+fn detected_link_rects_cover_the_url_text() {
+    let doc = PdfDocument::open(WITH_TEXT).unwrap();
+    let links = doc.page_links(0).unwrap();
+    let first = &links[0].rect;
+    // 1行目(表示のベースラインy=30)にあり、"See "の後ろから始まる(12ptで、約4文字分=24pt以上先)
+    assert!(first.y < 30.0 && first.y + first.height > 30.0, "{first:?}");
+    assert!(first.x > 20.0 + 20.0, "{first:?}");
+    // 文字列 "https://example.com/a/doc.pdf" は29文字。12ptで、およそ150pt以上の幅
+    assert!(first.width > 120.0, "{first:?}");
+    // 2行目のリンクは、1行目より下にある
+    assert!(links[1].rect.y > first.y + 20.0);
+}
+
+/// 回転したページでも、検出されたリンクが回転後の表示の位置に付く。
+#[test]
+fn detected_links_follow_a_rotated_page() {
+    let doc = PdfDocument::open(WITH_TEXT).unwrap();
+    let links = doc.page_links(1).unwrap();
+    assert_eq!(uris(links), ["https://example.com/r.pdf"]);
+    // 90度回転した表示(200x400)では、文字は縦に並ぶので、リンクは縦長
+    let r = links[0].rect;
+    assert!(r.height > r.width * 3.0, "{r:?}");
+}
+
+/// 注釈が付いている箇所は注釈を優先し、同じ箇所を二重にリンクにしない。注釈の無いURLは検出される。
+#[test]
+fn annotations_take_precedence_over_detected_urls() {
+    let doc = PdfDocument::open(TEXT_AND_ANNOTATION).unwrap();
+    assert_eq!(
+        uris(doc.page_links(0).unwrap()),
+        [
+            "https://annotated.example/target", // 注釈(文字のURLとは別の移動先)
+            "https://plain.example.org/only-text", // 注釈の無い、文字だけのURL
+        ]
+    );
+}

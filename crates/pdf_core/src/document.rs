@@ -116,7 +116,11 @@ impl PdfDocument {
             index,
             count: self.links.len(),
         })?;
-        Ok(cell.get_or_init(|| read_links(&self.pdf, self.page_ids(), index)))
+        Ok(cell.get_or_init(|| {
+            let empty = PageText::default();
+            let text = self.page_text(index).unwrap_or(&empty);
+            read_links(&self.pdf, self.page_ids(), index, text)
+        }))
     }
 
     /// ページ`index`の文字と位置。初回だけ取り出す(ページの解釈が要るので、重いことがある)。

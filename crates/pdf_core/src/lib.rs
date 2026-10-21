@@ -3,6 +3,7 @@
 mod dest;
 mod document;
 mod error;
+mod linkify;
 mod links;
 mod outline;
 mod render;

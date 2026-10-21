@@ -14,9 +14,7 @@ use crate::links::LinkRect;
 
 /// 1ページから取り出す文字数の上限。壊れた/悪意あるPDFへの安全弁。
 const MAX_CHARS: usize = 400_000;
-/// グリフの座標系の1em(hayroは1000に揃えている)。
-const EM: f64 = 1000.0;
-/// 文字の箱の、ベースラインから下(ディセンダ)と上(アセンダ)の目安(1em = 1000)。
+/// 文字の箱の、ベースラインから下(ディセンダ)と上(アセンダ)の目安。グリフの座標系は1em = 1000。
 const DESCENT: f64 = -210.0;
 const ASCENT: f64 = 810.0;
 /// 送り幅が分からないグリフの仮の送り幅。
@@ -70,9 +68,8 @@ impl TextCollector {
         }
         // 直前の文字を基準にした、次の文字の始まりの位置(グリフ座標)。
         let local = previous.inverse() * origin;
-        if local.y.abs() > SAME_LINE_TOLERANCE {
-            Gap::Line
-        } else if local.x < advance - ADJACENT_TOLERANCE {
+        // 別の行、または同じ行でも戻っている(新しいテキストが先頭から始まるなど)。
+        if local.y.abs() > SAME_LINE_TOLERANCE || local.x < advance - ADJACENT_TOLERANCE {
             Gap::Line
         } else if local.x <= advance + ADJACENT_TOLERANCE {
             Gap::None
