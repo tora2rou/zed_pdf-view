@@ -66,13 +66,7 @@ impl PdfDocument {
     fn rasterize(&self, index: usize, scale: f32) -> Result<RenderedPage, PdfError> {
         let page = self.page(index)?;
         let (w, h) = page.render_dimensions();
-        if !scale.is_finite()
-            || scale <= 0.0
-            || w * scale >= f32::from(u16::MAX)
-            || h * scale >= f32::from(u16::MAX)
-        {
-            return Err(PdfError::InvalidScale(scale));
-        }
+        validate_scale(scale, (w, h))?;
         let pixmap = hayro::render(
             page,
             &RenderCache::new(),
@@ -98,5 +92,15 @@ impl PdfDocument {
             index,
             count: pages.len(),
         })
+    }
+}
+
+/// 倍率が正の有限値で、描画後の画像サイズがhayroの上限(`u16`)に収まることを確かめる。
+fn validate_scale(scale: f32, (width, height): (f32, f32)) -> Result<(), PdfError> {
+    let max = f32::from(u16::MAX);
+    if scale.is_finite() && scale > 0.0 && width * scale < max && height * scale < max {
+        Ok(())
+    } else {
+        Err(PdfError::InvalidScale(scale))
     }
 }
