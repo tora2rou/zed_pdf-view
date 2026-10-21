@@ -20,6 +20,8 @@ actions!(
     [
         /// ファイル選択ダイアログを開く。
         OpenFile,
+        /// 最近開いたファイルの一覧を開閉する。
+        ToggleRecent,
     ]
 );
 
@@ -31,6 +33,8 @@ pub fn init(cx: &mut gpui::App) {
     cx.bind_keys([
         KeyBinding::new("ctrl-o", OpenFile, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-o", OpenFile, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-o", ToggleRecent, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-shift-o", ToggleRecent, Some(KEY_CONTEXT)),
     ]);
 }
 
@@ -52,6 +56,8 @@ pub struct AppWindow {
     /// 直近に開こうとして失敗した理由。開くのに成功したら消える。
     pub(crate) error: Option<SharedString>,
     pub(crate) recent: RecentFiles,
+    /// 最近のファイルの一覧を重ねて表示しているか。
+    pub(crate) show_recent: bool,
     /// タイトルバーのドラッグ開始待ち。最初のマウス移動でウィンドウ移動に切り替える。
     pub(crate) should_move: bool,
 }
@@ -79,6 +85,7 @@ impl AppWindow {
             viewer: None,
             error: None,
             recent,
+            show_recent: false,
             should_move: false,
         };
         if let Some((path, document)) = initial {
@@ -109,6 +116,7 @@ impl AppWindow {
         self.title = file_name(&path).into();
         window.set_window_title(&self.title);
         self.error = None;
+        self.show_recent = false;
         self.recent.add(path);
         if let Some(file) = recent_files_path()
             && let Err(e) = self.recent.save(&file)
@@ -157,6 +165,16 @@ impl AppWindow {
         .detach();
     }
 
+    pub(crate) fn toggle_recent(
+        &mut self,
+        _: &ToggleRecent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_recent = !self.show_recent;
+        cx.notify();
+    }
+
     /// ウィンドウにドロップされたファイルのうち、先頭のものを開く。
     fn on_drop(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(path) = paths.paths().first() {
@@ -165,7 +183,7 @@ impl AppWindow {
     }
 
     /// PDFを開く前の案内。
-    fn render_empty_state(&self) -> impl IntoElement + use<> {
+    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         div()
             .size_full()
             .flex()
@@ -176,6 +194,24 @@ impl AppWindow {
             .bg(rgb(VIEWER_BACKGROUND))
             .text_color(rgb(MUTED_TEXT))
             .child("Drop a PDF here, or press Ctrl+O")
+            .child(
+                div()
+                    .mt(px(16.0))
+                    .w(px(460.0))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(rgb(BORDER))
+                    .bg(rgb(BACKGROUND))
+                    .text_color(rgb(TEXT))
+                    .child(
+                        div()
+                            .px(px(12.0))
+                            .pt(px(8.0))
+                            .text_xs()
+                            .child("Recent files"),
+                    )
+                    .child(self.render_recent_list(cx)),
+            )
     }
 }
 
@@ -189,12 +225,13 @@ impl Render for AppWindow {
 
         let content = match &self.viewer {
             Some(viewer) => div().size_full().child(viewer.clone()).into_any_element(),
-            None => self.render_empty_state().into_any_element(),
+            None => self.render_empty_state(cx).into_any_element(),
         };
 
         div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::open_file))
+            .on_action(cx.listener(Self::toggle_recent))
             .on_drop(cx.listener(Self::on_drop))
             .relative()
             .size_full()
@@ -222,5 +259,6 @@ impl Render for AppWindow {
             })
             .child(div().flex_1().min_h_0().w_full().child(content))
             .when(client_side && !maximized, |d| d.children(resize_handles()))
+            .children(self.render_recent_overlay(window, cx))
     }
 }

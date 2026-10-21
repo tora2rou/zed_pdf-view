@@ -1,5 +1,6 @@
 mod app_window;
 mod recent;
+mod recent_menu;
 mod resize;
 mod titlebar;
 

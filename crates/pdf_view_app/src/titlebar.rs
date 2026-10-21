@@ -5,7 +5,7 @@ use gpui::{
     prelude::*, px, rgb,
 };
 
-use crate::app_window::AppWindow;
+use crate::app_window::{AppWindow, OpenFile, ToggleRecent};
 
 pub const TITLEBAR_HEIGHT: f32 = 32.0;
 
@@ -28,12 +28,37 @@ fn control_button(id: &'static str) -> Stateful<gpui::Div> {
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
 
+/// タイトルバー左側の文字ボタン(Open / Recent)。
+fn text_button(id: &'static str, label: &'static str) -> Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .h(px(24.0))
+        .mx(px(2.0))
+        .px(px(8.0))
+        .flex()
+        .items_center()
+        .rounded_sm()
+        .cursor_pointer()
+        .hover(|d| d.bg(rgb(HOVER)))
+        // ボタン上のマウス押下がドラッグ移動を始めないようにする。
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(label)
+}
+
 impl AppWindow {
     pub(crate) fn render_titlebar(
         &self,
         maximized: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        let open = text_button("open", "Open").on_click(cx.listener(
+            |this, _: &ClickEvent, window: &mut Window, cx| this.open_file(&OpenFile, window, cx),
+        ));
+        let recent = text_button("recent", "Recent").on_click(cx.listener(
+            |this, _: &ClickEvent, window: &mut Window, cx| {
+                this.toggle_recent(&ToggleRecent, window, cx)
+            },
+        ));
         let minimize = control_button("minimize")
             .window_control_area(WindowControlArea::Min)
             .hover(|d| d.bg(rgb(HOVER)))
@@ -82,6 +107,8 @@ impl AppWindow {
             .bg(rgb(BACKGROUND))
             .text_color(rgb(TEXT))
             .text_sm()
+            .child(open)
+            .child(recent)
             .child(
                 // 空き部分全体がドラッグ移動の領域。ダブルクリックで最大化/復元。
                 div()
