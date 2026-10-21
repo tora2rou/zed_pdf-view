@@ -6,6 +6,7 @@ mod images;
 mod layout;
 mod page_input;
 mod toolbar;
+mod transform;
 mod view;
 mod zoom;
 
