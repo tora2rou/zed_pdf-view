@@ -77,7 +77,7 @@ impl Layout {
         let index = self.pages.partition_point(|p| p.bottom() <= y);
         let page = self.pages.get(index)?;
         let inside = y >= page.top && x >= page.left && x < page.left + page.width;
-        inside.then(|| (index, x - page.left, y - page.top))
+        inside.then_some((index, x - page.left, y - page.top))
     }
 
     /// `scroll_top`を、実際にスクロールできる範囲(0〜内容の高さ−表示の高さ)に収める。

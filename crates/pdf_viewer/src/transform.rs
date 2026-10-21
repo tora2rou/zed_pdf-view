@@ -47,8 +47,13 @@ impl Rotation {
         }
     }
 
-    /// 回転前の画像上の点を、回転後の画像上の点にする(`to_base`の逆)。
-    pub fn from_base(self, (width, height): (f32, f32), (x, y): (f32, f32)) -> (f32, f32) {
+    /// 回転前の画像上の点を、回転後の画像上の点にする(`to_base`の逆)。テストで往復を確かめるのに使う。
+    #[cfg(test)]
+    pub(crate) fn rotate_point(
+        self,
+        (width, height): (f32, f32),
+        (x, y): (f32, f32),
+    ) -> (f32, f32) {
         match self {
             Self::Deg0 => (x, y),
             Self::Deg90 => (height - y, x),
@@ -175,7 +180,7 @@ mod tests {
             Rotation::Deg270,
         ] {
             for p in [(0.0, 0.0), (10.0, 70.0), (200.0, 100.0), (123.5, 45.25)] {
-                assert_eq!(r.to_base(base, r.from_base(base, p)), p, "{r:?} {p:?}");
+                assert_eq!(r.to_base(base, r.rotate_point(base, p)), p, "{r:?} {p:?}");
             }
         }
     }
@@ -184,13 +189,19 @@ mod tests {
     fn rotating_a_point_matches_rotating_the_image() {
         // 200x100の画像の左上(0,0)の画素は、時計回り90度で右上(100,0)になる
         let base = (200.0, 100.0);
-        assert_eq!(Rotation::Deg90.from_base(base, (0.0, 0.0)), (100.0, 0.0));
+        assert_eq!(Rotation::Deg90.rotate_point(base, (0.0, 0.0)), (100.0, 0.0));
         // 左下(0,100)は左上(0,0)へ
-        assert_eq!(Rotation::Deg90.from_base(base, (0.0, 100.0)), (0.0, 0.0));
+        assert_eq!(Rotation::Deg90.rotate_point(base, (0.0, 100.0)), (0.0, 0.0));
         // 270度: 左上(0,0)は左下(0,200)へ
-        assert_eq!(Rotation::Deg270.from_base(base, (0.0, 0.0)), (0.0, 200.0));
+        assert_eq!(
+            Rotation::Deg270.rotate_point(base, (0.0, 0.0)),
+            (0.0, 200.0)
+        );
         // 180度: 左上は右下へ
-        assert_eq!(Rotation::Deg180.from_base(base, (0.0, 0.0)), (200.0, 100.0));
+        assert_eq!(
+            Rotation::Deg180.rotate_point(base, (0.0, 0.0)),
+            (200.0, 100.0)
+        );
     }
 
     #[test]

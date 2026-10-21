@@ -5,6 +5,7 @@ mod convert;
 mod images;
 mod layout;
 mod link_hit;
+mod link_nav;
 mod outline_rows;
 mod page_input;
 mod pan;

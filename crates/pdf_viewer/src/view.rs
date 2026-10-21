@@ -51,9 +51,9 @@ pub(crate) struct RenderRequest {
 }
 
 /// ドラッグでスクロール中の状態。開始時のマウス位置とスクロール位置を覚えておく。
-struct DragState {
-    mouse: (f32, f32),
-    scroll: (f32, f32),
+pub(crate) struct DragState {
+    pub mouse: (f32, f32),
+    pub scroll: (f32, f32),
 }
 
 /// PDFを表示するビュー。全ページを縦に並べてスクロール・ズームできる。
@@ -63,7 +63,7 @@ struct DragState {
 pub struct PdfView {
     pub(crate) document: Arc<PdfDocument>,
     /// 各ページのPDFポイント単位のサイズ(回転前)。
-    base_sizes: Vec<(f32, f32)>,
+    pub(crate) base_sizes: Vec<(f32, f32)>,
     /// 各ページの表示上のサイズ(回転後)。レイアウトや倍率の計算にはこちらを使う。
     pub(crate) page_sizes: Vec<(f32, f32)>,
     /// 回転と白黒反転。
@@ -92,7 +92,9 @@ pub struct PdfView {
     /// ズームが落ち着いたら再描画するための待ち時間タスク。
     settle_task: Option<Task<()>>,
     pub(crate) focus_handle: FocusHandle,
-    drag: Option<DragState>,
+    pub(crate) drag: Option<DragState>,
+    /// マウスがリンクの上にあるか(カーソルの形を変える)。
+    pub(crate) hovering_link: bool,
     /// ページ番号入力欄の編集状態。`Some`の間は入力欄がフォーカスを持つ。
     pub(crate) page_input: Option<PageInput>,
     pub(crate) input_focus: FocusHandle,
@@ -130,6 +132,7 @@ impl PdfView {
             settle_task: None,
             focus_handle: cx.focus_handle(),
             drag: None,
+            hovering_link: false,
             page_input: None,
             input_focus: cx.focus_handle(),
         }
@@ -583,15 +586,17 @@ impl PdfView {
             .on_scroll(cx.listener(Self::on_scroll))
             .cursor(if self.drag.is_some() {
                 CursorStyle::ClosedHand
+            } else if self.hovering_link {
+                CursorStyle::PointingHand
             } else {
                 CursorStyle::OpenHand
             })
             .on_mouse_down(MouseButton::Left, cx.listener(Self::start_drag))
-            .on_mouse_move(cx.listener(|this, event, _, cx| this.drag_to(event, cx)))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.end_drag(cx)),
-            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                this.drag_to(event, cx);
+                this.update_link_hover(event.position, window, cx);
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::finish_press))
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.end_drag(cx)),
