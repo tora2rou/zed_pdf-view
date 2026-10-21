@@ -4,15 +4,15 @@ use std::collections::{HashMap, HashSet};
 
 use hayro::hayro_syntax::{
     Pdf,
-    object::{Dict, Name, Object, ObjectIdentifier, String as PdfString},
+    object::{Dict, ObjectIdentifier, String as PdfString},
 };
+
+use crate::dest::Destinations;
 
 /// 読み込む項目数の上限。壊れた/悪意あるPDFで延々と読み続けないための安全弁。
 const MAX_ITEMS: usize = 50_000;
 /// 階層の深さの上限。
 const MAX_DEPTH: usize = 32;
-/// 名前付き宛先のツリーをたどる深さの上限。
-const MAX_TREE_DEPTH: usize = 16;
 
 /// 目次の1項目。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,40 +24,33 @@ pub struct OutlineItem {
 }
 
 /// 文書全体の目次を読む。目次が無い・読めない場合は空。
-pub(crate) fn read_outline(pdf: &Pdf) -> Vec<OutlineItem> {
-    let xref = pdf.xref();
-    let Some(catalog) = xref.get::<Dict>(xref.root_id()) else {
+/// `page_ids`はページオブジェクトの識別子 → ページ番号の表。
+pub(crate) fn read_outline(
+    pdf: &Pdf,
+    page_ids: &HashMap<ObjectIdentifier, usize>,
+) -> Vec<OutlineItem> {
+    let Some(dests) = Destinations::new(pdf, page_ids) else {
         return Vec::new();
     };
-    let Some(outlines) = catalog.get::<Dict>(b"Outlines") else {
+    let Some(outlines) = dests.catalog().get::<Dict>(b"Outlines") else {
         return Vec::new();
     };
-    let pages = pdf
-        .pages()
-        .iter()
-        .enumerate()
-        .filter_map(|(index, page)| Some((page.raw().obj_id()?, index)))
-        .collect();
-    let reader = Reader {
-        catalog,
-        pages,
+    let mut reader = Reader {
+        dests,
         budget: MAX_ITEMS,
         visited: HashSet::new(),
     };
-    let mut reader = reader;
     reader.read_siblings(outlines.get::<Dict>(b"First"), 0)
 }
 
-struct Reader<'a> {
-    catalog: Dict<'a>,
-    /// ページオブジェクトの識別子 → ページ番号。
-    pages: HashMap<ObjectIdentifier, usize>,
+struct Reader<'a, 'p> {
+    dests: Destinations<'a, 'p>,
     budget: usize,
     /// 読み込み済みの項目。循環を検出する。
     visited: HashSet<ObjectIdentifier>,
 }
 
-impl<'a> Reader<'a> {
+impl<'a> Reader<'a, '_> {
     /// `first`から`Next`をたどって、同じ階層の項目を読む。
     fn read_siblings(&mut self, first: Option<Dict<'a>>, depth: usize) -> Vec<OutlineItem> {
         let mut items = Vec::new();
@@ -78,74 +71,13 @@ impl<'a> Reader<'a> {
                     .get::<PdfString>(b"Title")
                     .map(|s| decode_text_string(s.as_bytes()))
                     .unwrap_or_default(),
-                page: self.destination_page(&dict),
+                page: self.dests.page_of_item(&dict),
                 children,
             });
             current = dict.get::<Dict>(b"Next");
         }
         items
     }
-
-    /// 項目の移動先ページ。`/Dest`、または`/A`(GoToアクション)の`/D`から求める。
-    fn destination_page(&self, item: &Dict<'a>) -> Option<usize> {
-        if let Some(dest) = item.get::<Object>(b"Dest") {
-            return self.page_of(dest, 0);
-        }
-        let action = item.get::<Dict>(b"A")?;
-        let kind = action.get::<Name>(b"S")?;
-        if kind.as_ref() != b"GoTo" {
-            return None;
-        }
-        self.page_of(action.get::<Object>(b"D")?, 0)
-    }
-
-    /// 宛先オブジェクト(配列・辞書・名前・文字列)が指すページ。
-    fn page_of(&self, dest: Object<'a>, depth: usize) -> Option<usize> {
-        if depth > MAX_TREE_DEPTH {
-            return None;
-        }
-        match dest {
-            Object::Array(array) => {
-                let page_ref = array.raw_iter().next()?.as_obj_ref()?;
-                self.pages.get(&ObjectIdentifier::from(page_ref)).copied()
-            }
-            Object::Dict(dict) => self.page_of(dict.get::<Object>(b"D")?, depth + 1),
-            Object::Name(name) => self.named_destination(name.as_ref(), depth),
-            Object::String(string) => self.named_destination(string.as_bytes(), depth),
-            _ => None,
-        }
-    }
-
-    /// 名前付き宛先を、カタログの`/Dests`辞書と`/Names`の`/Dests`ツリーから探す。
-    fn named_destination(&self, key: &[u8], depth: usize) -> Option<usize> {
-        if let Some(dests) = self.catalog.get::<Dict>(b"Dests")
-            && let Some(dest) = dests.get::<Object>(key)
-        {
-            return self.page_of(dest, depth + 1);
-        }
-        let root = self.catalog.get::<Dict>(b"Names")?.get::<Dict>(b"Dests")?;
-        let dest = find_in_name_tree(&root, key, 0)?;
-        self.page_of(dest, depth + 1)
-    }
-}
-
-/// ネームツリー(`/Names`の[キー, 値]の並び、または`/Kids`の子ノード)から`key`の値を探す。
-fn find_in_name_tree<'a>(node: &Dict<'a>, key: &[u8], depth: usize) -> Option<Object<'a>> {
-    if depth > MAX_TREE_DEPTH {
-        return None;
-    }
-    if let Some(names) = node.get::<hayro::hayro_syntax::object::Array>(b"Names") {
-        let mut iter = names.flex_iter();
-        while let Some(name) = iter.next::<PdfString>() {
-            let value = iter.next::<Object>()?;
-            if name.as_bytes() == key {
-                return Some(value);
-            }
-        }
-    }
-    let kids = node.get::<hayro::hayro_syntax::object::Array>(b"Kids")?;
-    kids.iter::<Dict>()
-        .find_map(|kid| find_in_name_tree(&kid, key, depth + 1))
 }
 
 /// PDFの「テキスト文字列」を`String`にする。

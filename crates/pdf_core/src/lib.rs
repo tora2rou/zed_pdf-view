@@ -1,5 +1,6 @@
 //! PDFの読み込み・ラスタライズ・キャッシュを行う、GPUI非依存のコア。
 
+mod dest;
 mod document;
 mod error;
 mod outline;

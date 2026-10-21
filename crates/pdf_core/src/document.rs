@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     num::NonZeroUsize,
     path::Path,
@@ -8,12 +9,12 @@ use std::{
 use hayro::{
     PixmapSettings, RenderCache, RenderSettings,
     hayro_interpret::InterpreterSettings,
-    hayro_syntax::{Pdf, page::Page},
+    hayro_syntax::{Pdf, object::ObjectIdentifier, page::Page},
     vello_cpu::color::palette::css::WHITE,
 };
 use lru::LruCache;
 
-use crate::{OutlineItem, PdfError, RenderedPage, outline::read_outline};
+use crate::{OutlineItem, PdfError, RenderedPage, dest::page_index_by_id, outline::read_outline};
 
 /// キャッシュするページ画像の既定の最大枚数。
 const DEFAULT_CACHE_CAPACITY: usize = 16;
@@ -26,6 +27,8 @@ pub struct PdfDocument {
     cache: Mutex<LruCache<CacheKey, Arc<RenderedPage>>>,
     /// 目次。初めて必要になったときに読む。
     outline: OnceLock<Vec<OutlineItem>>,
+    /// ページオブジェクトの識別子 → ページ番号。目次やリンクの宛先の解決に使う。
+    page_ids: OnceLock<HashMap<ObjectIdentifier, usize>>,
 }
 
 impl PdfDocument {
@@ -37,6 +40,7 @@ impl PdfDocument {
             pdf,
             cache: Mutex::new(LruCache::new(capacity)),
             outline: OnceLock::new(),
+            page_ids: OnceLock::new(),
         })
     }
 
@@ -46,7 +50,8 @@ impl PdfDocument {
 
     /// 文書の目次。無ければ空。初回だけ読み込む。
     pub fn outline(&self) -> &[OutlineItem] {
-        self.outline.get_or_init(|| read_outline(&self.pdf))
+        self.outline
+            .get_or_init(|| read_outline(&self.pdf, self.page_ids()))
     }
 
     /// ページのサイズ(幅, 高さ)をPDFポイント単位(1/72インチ)で返す。回転・CropBox反映済み。
@@ -93,6 +98,10 @@ impl PdfDocument {
             },
         );
         Ok(RenderedPage::from_pixmap(&pixmap))
+    }
+
+    fn page_ids(&self) -> &HashMap<ObjectIdentifier, usize> {
+        self.page_ids.get_or_init(|| page_index_by_id(&self.pdf))
     }
 
     fn page(&self, index: usize) -> Result<&Page<'_>, PdfError> {
