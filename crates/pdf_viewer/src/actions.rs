@@ -29,6 +29,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-0", ResetZoom, ctx),
         KeyBinding::new("pagedown", NextPage, ctx),
         KeyBinding::new("pageup", PreviousPage, ctx),
+        KeyBinding::new("right", NextPage, ctx),
+        KeyBinding::new("left", PreviousPage, ctx),
         KeyBinding::new("home", FirstPage, ctx),
         KeyBinding::new("end", LastPage, ctx),
     ]);
