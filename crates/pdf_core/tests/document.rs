@@ -9,7 +9,10 @@ fn open_valid_pdf() {
 
 #[test]
 fn open_missing_file_is_io_error() {
-    assert!(matches!(PdfDocument::open("/nonexistent.pdf"), Err(PdfError::Io(_))));
+    assert!(matches!(
+        PdfDocument::open("/nonexistent.pdf"),
+        Err(PdfError::Io(_))
+    ));
 }
 
 #[test]
@@ -37,5 +40,47 @@ fn page_size_out_of_range() {
     assert!(matches!(
         doc.page_size(2),
         Err(PdfError::PageOutOfRange { index: 2, count: 2 })
+    ));
+}
+
+fn pixel(page: &pdf_core::RenderedPage, x: u32, y: u32) -> [u8; 4] {
+    let i = ((y * page.width + x) * 4) as usize;
+    page.rgba[i..i + 4].try_into().unwrap()
+}
+
+#[test]
+fn render_page_dimensions_follow_scale() {
+    let doc = PdfDocument::open(FIXTURE).unwrap();
+    let page = doc.render_page(1, 2.0).unwrap();
+    assert_eq!((page.width, page.height), (600, 400));
+    assert_eq!(page.rgba.len(), 600 * 400 * 4);
+}
+
+#[test]
+fn render_page_draws_content_on_white() {
+    let doc = PdfDocument::open(FIXTURE).unwrap();
+    let page = doc.render_page(1, 1.0).unwrap();
+    // 青い矩形はPDF座標(0,0)-(150,100) = 画面左下
+    assert_eq!(pixel(&page, 10, 190), [0, 0, 255, 255]);
+    assert_eq!(pixel(&page, 290, 10), [255, 255, 255, 255]);
+}
+
+#[test]
+fn render_page_rejects_bad_scale() {
+    let doc = PdfDocument::open(FIXTURE).unwrap();
+    for s in [0.0, -1.0, f32::NAN, 1000.0] {
+        assert!(
+            matches!(doc.render_page(0, s), Err(PdfError::InvalidScale(_))),
+            "{s}"
+        );
+    }
+}
+
+#[test]
+fn render_page_out_of_range() {
+    let doc = PdfDocument::open(FIXTURE).unwrap();
+    assert!(matches!(
+        doc.render_page(5, 1.0),
+        Err(PdfError::PageOutOfRange { .. })
     ));
 }

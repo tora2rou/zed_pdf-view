@@ -2,6 +2,8 @@
 
 mod document;
 mod error;
+mod render;
 
 pub use document::PdfDocument;
 pub use error::PdfError;
+pub use render::RenderedPage;
