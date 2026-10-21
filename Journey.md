@@ -94,3 +94,22 @@ Zed向けGPUI製PDFビューアの開発過程を記録する。
   - アイコンは、フォント依存を避けるため `div` の枠線で描いた (閉じるだけは `×`)。Windows向けに `window_control_area` も指定してある。
 - 縁・角 8 方向の透明な `absolute` 領域で `start_window_resize`。最大化中は出さない。影や丸角は付けていない。
 - 未確認: WSLgでクライアント装飾が期待どおり動くか (ボタン・ドラッグ・リサイズ) は、このセッションからは目視できていない。起動とクラッシュしないことのみ確認。
+
+## B. Zed本体への組み込み: 調査 (rev fae8a35)
+`image_viewer` を参考に、PDFをタブで開くために必要なものを調べた。
+
+- 拡張機能(WASM)からは実現できない。Zed本体に crate を追加する形になる。
+- ファイルを開く仕組み:
+  - `workspace::register_project_item::<V>(cx)` で登録する。`V: workspace::item::ProjectItem`、`V::Item: project::ProjectItem`。
+  - `project::ProjectItem::try_open` が `Some(Task)` を返したビューが、そのファイルを開く。`None` なら次の候補へ。
+  - レジストリは**後から登録したものを先に試す** (`.iter().rev()`)。`main.rs` で `editor::init` の後に登録すれば、PDFをエディタより先に判定できる。
+  - `project::ProjectItem` は `project` crate の外でも実装できる。→ `ImageItem` と同様の `PdfItem` を、組み込み用の crate 側に作れば `project` crate の改造は不要。
+- `workspace::item::Item` の必須メソッドは `tab_content_text` だけ。他は既定実装がある (`Focusable + EventEmitter + Render` は必要)。`can_split`/`clone_on_split`、`tab_icon`、`tab_tooltip_text`、`for_each_project_item` などを必要に応じて実装する。
+- ファイル読み込み: `Worktree::load_binary_file(path, cx)` が `LoadedBinaryFile { file, content: Vec<u8> }` を返す。ローカルworktreeのみ対応 (リモートは「未対応」エラー)。→ `PdfDocument::from_bytes` が必要。
+- 組み込み先は `crates/zed/src/main.rs` の `image_viewer::init(cx)` の隣に1行足すだけ。他に、ルートの `Cargo.toml` (members と workspace.dependencies) と `crates/zed/Cargo.toml` の変更が必要。
+- `image_viewer` は GPL-3.0-or-later。Zed本体もGPL。本リポジトリの crate は Apache-2.0 (GPLv3組み込みは可能)。`image_viewer` のコードは本リポジトリの crate にコピーしない。Zed側に置く組み込み用 crate は GPL-3.0-or-later にする。
+- 想定される罠:
+  - gpui が二重になる: 本リポジトリの `gpui` はgit依存、Zed内では `path` 依存。型が食い違うので、Zed側の `Cargo.toml` に `[patch."https://github.com/zed-industries/zed"] gpui = { path = "crates/gpui" }` が必要。
+  - `pdf_viewer` の色は固定値。Zedに入れるとテーマに合わせたい → 色を `PdfViewStyle` として外から渡せるようにする。
+  - Zed の workspace lint、`LICENSE-GPL`、依存ライセンスチェック (`script/licenses/zed-licenses.toml`) に新 crate / 新依存 (hayro 等) が通るか。
+- 環境: 24コア / RAM 14GB / ディスク空き 881GB。Zed本体のフルビルドは初回に長時間かかり、ディスクも数十GB使う見込み。リンク時のメモリが逼迫する可能性がある。
