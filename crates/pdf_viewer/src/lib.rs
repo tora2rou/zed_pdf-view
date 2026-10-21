@@ -4,6 +4,7 @@ mod actions;
 mod convert;
 mod images;
 mod layout;
+mod page_input;
 mod view;
 mod zoom;
 
