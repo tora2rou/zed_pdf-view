@@ -154,8 +154,10 @@ fn find_in_name_tree<'a>(node: &Dict<'a>, key: &[u8], depth: usize) -> Option<Ob
 fn decode_text_string(bytes: &[u8]) -> String {
     if let Some(utf16) = bytes.strip_prefix(&[0xFE, 0xFF]) {
         let units = utf16
-            .chunks_exact(2)
-            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]));
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_be_bytes(*pair));
         return char::decode_utf16(units)
             .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
             .collect();

@@ -12,7 +12,10 @@ use crate::{
         FirstPage, KEY_CONTEXT, LastPage, NextPage, PreviousPage, ResetZoom, RotateClockwise,
         RotateCounterclockwise, ToggleDarkMode, ToggleFullscreen, ZoomIn, ZoomOut,
     },
-    images::{ImageKey, Lookup, PageImages, render_page_image, settle_remaining, with_prefetch},
+    images::{
+        ImageKey, Lookup, PageImages, RenderMode, render_page_image, settle_remaining,
+        with_prefetch,
+    },
     layout::{self, Layout},
     page_input::PageInput,
     pan::dragged_scroll,
@@ -346,9 +349,9 @@ impl PdfView {
         let appearance = self.appearance;
         cx.spawn_in(window, async move |this, cx| {
             let result = cx
-                .background_spawn(
-                    async move { render_page_image(&document, index, scale, appearance) },
-                )
+                .background_spawn(async move {
+                    render_page_image(&document, index, scale, appearance, RenderMode::Cached)
+                })
                 .await;
             this.update_in(cx, |this, window, cx| {
                 if let Some(unused) = this.images.complete(index, key, result) {
