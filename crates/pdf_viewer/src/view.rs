@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use gpui::{
-    App, Context, CursorStyle, FocusHandle, Focusable, MouseButton, MouseDownEvent, MouseMoveEvent,
-    Pixels, Point, ScrollDelta, ScrollEvent, ScrollHandle, Window, div, img, point, prelude::*, px,
-    rgb,
+    App, AppContext as _, Context, CursorStyle, FocusHandle, Focusable, MouseButton,
+    MouseDownEvent, MouseMoveEvent, Pixels, Point, ScrollDelta, ScrollEvent, ScrollHandle, Task,
+    Window, div, img, point, prelude::*, px, rgb,
 };
 use pdf_core::PdfDocument;
 
@@ -12,7 +12,7 @@ use crate::{
         FirstPage, KEY_CONTEXT, LastPage, NextPage, PreviousPage, ResetZoom, RotateClockwise,
         RotateCounterclockwise, ToggleDarkMode, ToggleFullscreen, ZoomIn, ZoomOut,
     },
-    images::PageImages,
+    images::{ImageKey, Lookup, PageImages, render_page_image, settle_remaining, with_prefetch},
     layout::{self, Layout},
     page_input::PageInput,
     pan::dragged_scroll,
@@ -50,6 +50,10 @@ pub struct PdfView {
     /// 次の描画の冒頭で適用するスクロール位置(GPUIのスクロール処理との競合を避けるため遅延させる)。
     pending_offset: Option<Point<Pixels>>,
     images: PageImages,
+    /// 最後にズーム倍率が変わった時刻。連続操作の途中で無駄な再描画をしないために使う。
+    last_zoom_change: Option<Instant>,
+    /// ズームが落ち着いたら再描画するための待ち時間タスク。
+    settle_task: Option<Task<()>>,
     pub(crate) focus_handle: FocusHandle,
     drag: Option<DragState>,
     /// ページ番号入力欄の編集状態。`Some`の間は入力欄がフォーカスを持つ。
@@ -77,6 +81,8 @@ impl PdfView {
             scroll_handle: ScrollHandle::new(),
             pending_offset: None,
             images: PageImages::default(),
+            last_zoom_change: None,
+            settle_task: None,
             focus_handle: cx.focus_handle(),
             drag: None,
             page_input: None,
@@ -91,7 +97,9 @@ impl PdfView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.images.clear(window);
+        for old in self.images.clear() {
+            window.drop_image(old).ok();
+        }
         self.base_sizes = page_sizes_of(&document);
         self.page_sizes = self
             .base_sizes
@@ -160,6 +168,7 @@ impl PdfView {
         let x = zoom::scroll_after_zoom(x, anchor.0, self.zoom, new_zoom);
         let y = zoom::scroll_after_zoom(y, anchor.1, self.zoom, new_zoom);
         self.zoom = new_zoom;
+        self.last_zoom_change = Some(cx.background_executor().now());
         self.set_scroll(x.max(0.0), y.max(0.0), cx);
     }
 
@@ -324,6 +333,48 @@ impl PdfView {
         }
     }
 
+    /// ページ`index`の描画をバックグラウンドで始め、終わったら結果を受け取って再描画する。
+    fn spawn_render(
+        &mut self,
+        index: usize,
+        key: ImageKey,
+        scale: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let document = self.document.clone();
+        let appearance = self.appearance;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx
+                .background_spawn(
+                    async move { render_page_image(&document, index, scale, appearance) },
+                )
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                if let Some(unused) = this.images.complete(index, key, result) {
+                    // 置き換わった古い画像、または古くなって使われなかった画像。
+                    window.drop_image(unused).ok();
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// ズームが落ち着く頃に再描画させる(その時点で改めて高解像度の描画を要求するため)。
+    fn schedule_settle(
+        &mut self,
+        remaining: std::time::Duration,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settle_task = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(remaining).await;
+            this.update(cx, |_, cx| cx.notify()).ok();
+        }));
+    }
+
     /// ズーム方式を切り替える。`Manual`以外は次の描画で倍率が計算される。
     pub(crate) fn set_zoom_mode(&mut self, mode: ZoomMode, cx: &mut Context<Self>) {
         self.zoom_mode = mode;
@@ -332,7 +383,7 @@ impl PdfView {
 
     /// フィット表示の間、ビューポートの大きさに合わせて倍率を計算し直す。
     /// 倍率が変わったら、スクロール位置も内容に合わせて補正する。
-    fn apply_fit(&mut self, viewport: (f32, f32)) {
+    fn apply_fit(&mut self, viewport: (f32, f32), now: Instant) {
         let target = match self.zoom_mode {
             ZoomMode::Manual => return,
             ZoomMode::FitWidth => {
@@ -352,6 +403,7 @@ impl PdfView {
         let (_, y) = self.scroll_position();
         let old = self.zoom;
         self.zoom = target;
+        self.last_zoom_change = Some(now);
         let y = if self.zoom_mode == ZoomMode::FitPage {
             self.layout(viewport.0).scroll_top_of(current)
         } else {
@@ -398,14 +450,45 @@ impl Render for PdfView {
             self.scroll_handle.set_offset(offset);
         }
         let viewport = self.viewport_size(window);
-        self.apply_fit(viewport);
+        let now = cx.background_executor().now();
+        self.apply_fit(viewport, now);
         let (viewport_width, viewport_height) = viewport;
         let layout = self.layout(viewport_width);
         let (_, scroll_top) = self.scroll_position();
         let visible = layout.visible_range(scroll_top, viewport_height);
-        self.images.retain_visible(&visible, window);
-
         let scale = self.zoom * window.scale_factor();
+        let key = self.images.key(scale, self.appearance);
+        let keep = with_prefetch(&visible, self.page_sizes.len());
+        for old in self.images.retain(&keep) {
+            window.drop_image(old).ok();
+        }
+
+        // 見えているページを先に、続けて先読み分の描画を要求する。ズーム操作の直後は、
+        // 仮表示できる古い画像があるページの再描画を少し待つ(連続操作で無駄に描かない)。
+        let settling = self
+            .last_zoom_change
+            .and_then(|changed| settle_remaining(now.saturating_duration_since(changed)));
+        let prefetch = keep.clone().filter(|i| !visible.contains(i));
+        for index in visible.clone().chain(prefetch) {
+            let needs_render = match self.images.lookup(index, &key) {
+                Lookup::Fresh(_) | Lookup::Failed(_) => false,
+                Lookup::Stale(_) => settling.is_none(),
+                Lookup::Missing => true,
+            };
+            if needs_render && self.images.request(index, key) {
+                self.spawn_render(index, key, scale, window, cx);
+            }
+        }
+        match settling {
+            Some(remaining) => self.schedule_settle(remaining, window, cx),
+            None => self.settle_task = None,
+        }
+
+        let placeholder = if self.appearance.invert {
+            0x1a1a1a
+        } else {
+            0xffffff
+        };
         let mut content = div().relative().w(px(layout.width)).h(px(layout.height));
         for index in visible {
             let rect = layout.pages[index];
@@ -415,18 +498,14 @@ impl Render for PdfView {
                 .top(px(rect.top))
                 .w(px(rect.width))
                 .h(px(rect.height));
-            let page = match self.images.get_or_render(
-                &self.document,
-                index,
-                scale,
-                self.appearance,
-                window,
-            ) {
-                Ok(image) => page.child(img(image).size_full()),
-                Err(e) => page
+            let page = match self.images.lookup(index, &key) {
+                // 古い画像は、GPUが新しいページの大きさに引き伸ばして仮に表示する。
+                Lookup::Fresh(image) | Lookup::Stale(image) => page.child(img(image).size_full()),
+                Lookup::Failed(message) => page
                     .bg(rgb(0xffffff))
                     .text_color(rgb(0xcc0000))
-                    .child(e.to_string()),
+                    .child(message.to_string()),
+                Lookup::Missing => page.bg(rgb(placeholder)),
             };
             content = content.child(page);
         }
@@ -481,5 +560,90 @@ impl Render for PdfView {
                     )
                     .child(content),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transform::Appearance;
+    use gpui::TestAppContext;
+
+    const FIXTURE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../pdf_core/tests/fixtures/two_pages.pdf"
+    );
+
+    fn open_view(cx: &mut TestAppContext) -> (gpui::Entity<PdfView>, &mut gpui::VisualTestContext) {
+        let document = Arc::new(PdfDocument::open(FIXTURE).unwrap());
+        cx.add_window_view(|_, cx| PdfView::new(document, cx))
+    }
+
+    /// 描画はバックグラウンドで行われ、終わると画像が届く。見えているページも先読みのページも。
+    #[gpui::test]
+    fn pages_are_rendered_in_the_background(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx);
+        cx.run_until_parked();
+
+        let fresh = view.update_in(cx, |this, window, _| {
+            let key = this
+                .images
+                .key(this.zoom * window.scale_factor(), Appearance::default());
+            (0..2)
+                .map(|i| matches!(this.images.lookup(i, &key), Lookup::Fresh(_)))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(fresh, [true, true], "pages 0 and 1 should be rendered");
+    }
+
+    /// 文書を入れ替えると、古い文書の画像は残らず、新しい文書が描画される。
+    #[gpui::test]
+    fn replacing_the_document_renders_the_new_one(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx);
+        cx.run_until_parked();
+
+        let other = Arc::new(PdfDocument::open(FIXTURE).unwrap());
+        view.update_in(cx, |this, window, cx| this.set_document(other, window, cx));
+        cx.run_until_parked();
+
+        let fresh = view.update_in(cx, |this, window, _| {
+            let key = this
+                .images
+                .key(this.zoom * window.scale_factor(), Appearance::default());
+            matches!(this.images.lookup(0, &key), Lookup::Fresh(_))
+        });
+        assert!(fresh, "the new document's page 0 should be rendered");
+    }
+
+    /// ズームすると、再描画が終わるまで古い画像を仮表示し、落ち着いたら新しい倍率で描画し直す。
+    #[gpui::test]
+    fn zoom_rerenders_after_settling(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx);
+        cx.run_until_parked();
+
+        view.update_in(cx, |this, window, cx| {
+            this.zoom_in(&ZoomIn, window, cx);
+        });
+        let stale = view.update_in(cx, |this, window, _| {
+            let key = this
+                .images
+                .key(this.zoom * window.scale_factor(), Appearance::default());
+            matches!(
+                this.images.lookup(0, &key),
+                Lookup::Stale(_) | Lookup::Fresh(_)
+            )
+        });
+        assert!(stale, "an image should still be shown right after zooming");
+
+        // 待ち時間のタイマーも含めて進める
+        cx.executor().advance_clock(crate::images::ZOOM_SETTLE * 2);
+        cx.run_until_parked();
+        let fresh = view.update_in(cx, |this, window, _| {
+            let key = this
+                .images
+                .key(this.zoom * window.scale_factor(), Appearance::default());
+            matches!(this.images.lookup(0, &key), Lookup::Fresh(_))
+        });
+        assert!(fresh, "page 0 should be re-rendered at the new zoom");
     }
 }
