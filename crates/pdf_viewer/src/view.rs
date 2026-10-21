@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use gpui::{
-    App, Context, CursorStyle, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, Pixels, Point, ScrollDelta, ScrollEvent, ScrollHandle, Window, div, img, point,
-    prelude::*, px, rgb,
+    App, Context, CursorStyle, FocusHandle, Focusable, MouseButton, MouseDownEvent, MouseMoveEvent,
+    Pixels, Point, ScrollDelta, ScrollEvent, ScrollHandle, Window, div, img, point, prelude::*, px,
+    rgb,
 };
 use pdf_core::PdfDocument;
 
@@ -50,7 +50,7 @@ pub struct PdfView {
     /// 次の描画の冒頭で適用するスクロール位置(GPUIのスクロール処理との競合を避けるため遅延させる)。
     pending_offset: Option<Point<Pixels>>,
     images: PageImages,
-    focus_handle: FocusHandle,
+    pub(crate) focus_handle: FocusHandle,
     drag: Option<DragState>,
     /// ページ番号入力欄の編集状態。`Some`の間は入力欄がフォーカスを持つ。
     pub(crate) page_input: Option<PageInput>,
@@ -333,52 +333,6 @@ impl PdfView {
             y * target / old
         };
         self.scroll_handle.set_offset(point(px(0.0), px(-y)));
-    }
-
-    /// ページ番号入力欄の編集を始める。
-    pub(crate) fn start_page_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (w, h) = self.viewport_size(window);
-        let current = self.current_page(&self.layout(w), h);
-        self.page_input = Some(PageInput::new(current + 1));
-        window.focus(&self.input_focus, cx);
-        cx.notify();
-    }
-
-    /// 入力欄の編集を終えて、ビュー本体にフォーカスを戻す。
-    fn finish_page_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.page_input = None;
-        window.focus(&self.focus_handle, cx);
-        cx.notify();
-    }
-
-    pub(crate) fn on_input_key(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(input) = self.page_input.as_mut() else {
-            return;
-        };
-        let keystroke = &event.keystroke;
-        match keystroke.key.as_str() {
-            "enter" => {
-                if let Some(page) = input.commit(self.page_sizes.len()) {
-                    self.scroll_to_page(page, window, cx);
-                }
-                self.finish_page_input(window, cx);
-            }
-            "escape" => self.finish_page_input(window, cx),
-            "backspace" => input.backspace(),
-            _ => {
-                let typed = keystroke.key_char.as_deref().and_then(|s| s.chars().next());
-                if let (Some(c), false) = (typed, keystroke.modifiers.control) {
-                    input.push(c);
-                }
-            }
-        }
-        cx.notify();
-        cx.stop_propagation();
     }
 
     /// Ctrl/Cmd + ホイールでズームする。それ以外のスクロールはGPUIの標準処理に任せる。

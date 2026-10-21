@@ -1,11 +1,15 @@
 //! ブラウザのPDFビューア風のツールバー(ページ移動・ページ番号入力・ズーム)。
 
-use gpui::{ClickEvent, Context, MouseButton, SharedString, Stateful, div, prelude::*, px, rgb};
+use gpui::{
+    ClickEvent, Context, KeyDownEvent, MouseButton, SharedString, Stateful, Window, div,
+    prelude::*, px, rgb,
+};
 
 use crate::{
     actions::{
         NextPage, PreviousPage, RotateClockwise, ToggleDarkMode, ToggleFullscreen, ZoomIn, ZoomOut,
     },
+    page_input::PageInput,
     view::PdfView,
     zoom::ZoomMode,
 };
@@ -132,5 +136,53 @@ impl PdfView {
                     this.toggle_fullscreen(&ToggleFullscreen, window, cx)
                 },
             )))
+    }
+}
+
+impl PdfView {
+    /// ページ番号入力欄の編集を始める。
+    pub(crate) fn start_page_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (w, h) = self.viewport_size(window);
+        let current = self.current_page(&self.layout(w), h);
+        self.page_input = Some(PageInput::new(current + 1));
+        window.focus(&self.input_focus, cx);
+        cx.notify();
+    }
+
+    /// 入力欄の編集を終えて、ビュー本体にフォーカスを戻す。
+    fn finish_page_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.page_input = None;
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn on_input_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(input) = self.page_input.as_mut() else {
+            return;
+        };
+        let keystroke = &event.keystroke;
+        match keystroke.key.as_str() {
+            "enter" => {
+                if let Some(page) = input.commit(self.page_sizes.len()) {
+                    self.scroll_to_page(page, window, cx);
+                }
+                self.finish_page_input(window, cx);
+            }
+            "escape" => self.finish_page_input(window, cx),
+            "backspace" => input.backspace(),
+            _ => {
+                let typed = keystroke.key_char.as_deref().and_then(|s| s.chars().next());
+                if let (Some(c), false) = (typed, keystroke.modifiers.control) {
+                    input.push(c);
+                }
+            }
+        }
+        cx.notify();
+        cx.stop_propagation();
     }
 }
