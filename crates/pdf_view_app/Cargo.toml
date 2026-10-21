@@ -1,0 +1,9 @@
+[package]
+name = "pdf_view_app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pdf_view_app"
+path = "src/main.rs"
