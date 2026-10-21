@@ -37,3 +37,13 @@ Zed向けGPUI製PDFビューアの開発過程を記録する。
 - Zed組み込みを見据え、`PdfView::new(Arc<PdfDocument>, cx)` はファイルI/Oを持たない。`image_viewer` の `Item` 実装は、組み込み時に別途ラップする想定。
 - 描画エラー(範囲外など)はビュー内にテキスト表示する。
 - 変換関数のテスト3件。`Render` は目視確認が必要なので ④ で確認する。
+
+## ④ pdf_view_app (ウィンドウ表示)
+- 方針: Zed本体への組み込み(Item化)は、単体アプリ(A)が完成してから着手する(B)。Zed拡張機能(WASM)には独自ペイン/Itemを追加するAPIがないため、拡張機能としては配布できない。
+- 起動API: このrevでは `gpui_platform::application().run(...)` を使う (`gpui::App::new` ではない)。`gpui_platform` を `default-features = false, features = ["wayland", "x11"]` で追加。ネイティブLinuxではシステムフォントが使われるのでフォント登録は不要。
+- 窓を開く際、`cx.new` を使うには `gpui::AppContext as _` の import が必要。
+- 引数エラー・読み込みエラーは標準エラーに出して終了コード1。`pdf_path_from_args` は単体テスト3件。
+- 動作確認:
+  - 引数なし / 存在しないファイルは想定通りのメッセージで終了コード1。
+  - `two_pages.pdf` で起動し、8秒間パニックなく動作した。EGL/MESAの警告はWSL2のGPUドライバ由来で、ソフトウェア描画にフォールバックしている。
+  - WSLgではウィンドウのスクリーンショット (`import -window root`) が取得できなかったため、見た目はユーザーの目視確認に委ねた。
