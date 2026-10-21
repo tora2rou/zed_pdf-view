@@ -5,6 +5,7 @@ mod convert;
 mod images;
 mod layout;
 mod page_input;
+mod pan;
 mod toolbar;
 mod transform;
 mod view;

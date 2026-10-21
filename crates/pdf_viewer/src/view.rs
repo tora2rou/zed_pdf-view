@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use gpui::{
-    App, Context, FocusHandle, Focusable, KeyDownEvent, MouseButton, Pixels, Point, ScrollDelta,
-    ScrollEvent, ScrollHandle, Window, div, img, point, prelude::*, px, rgb,
+    App, Context, CursorStyle, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, Pixels, Point, ScrollDelta, ScrollEvent, ScrollHandle, Window, div, img, point,
+    prelude::*, px, rgb,
 };
 use pdf_core::PdfDocument;
 
@@ -14,6 +15,7 @@ use crate::{
     images::PageImages,
     layout::{self, Layout},
     page_input::PageInput,
+    pan::dragged_scroll,
     toolbar::TOOLBAR_HEIGHT,
     transform::Appearance,
     zoom::{self, ZoomMode},
@@ -23,6 +25,12 @@ use crate::{
 const WHEEL_LINE_HEIGHT: f32 = 40.0;
 /// ページ情報の判定位置: 画面上端からこの割合だけ下にあるページを「現在のページ」とする。
 const CURRENT_PAGE_PROBE: f32 = 0.3;
+
+/// ドラッグでスクロール中の状態。開始時のマウス位置とスクロール位置を覚えておく。
+struct DragState {
+    mouse: (f32, f32),
+    scroll: (f32, f32),
+}
 
 /// PDFを表示するビュー。全ページを縦に並べてスクロール・ズームできる。
 ///
@@ -43,6 +51,7 @@ pub struct PdfView {
     pending_offset: Option<Point<Pixels>>,
     images: PageImages,
     focus_handle: FocusHandle,
+    drag: Option<DragState>,
     /// ページ番号入力欄の編集状態。`Some`の間は入力欄がフォーカスを持つ。
     pub(crate) page_input: Option<PageInput>,
     pub(crate) input_focus: FocusHandle,
@@ -64,6 +73,7 @@ impl PdfView {
             pending_offset: None,
             images: PageImages::default(),
             focus_handle: cx.focus_handle(),
+            drag: None,
             page_input: None,
             input_focus: cx.focus_handle(),
         }
@@ -253,6 +263,42 @@ impl PdfView {
         window.toggle_fullscreen();
     }
 
+    /// ページ領域でマウスを押したら、ビューにフォーカスを戻してドラッグスクロールを始める。
+    fn start_drag(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus_handle, cx);
+        self.drag = Some(DragState {
+            mouse: (f32::from(event.position.x), f32::from(event.position.y)),
+            scroll: self.scroll_position(),
+        });
+        cx.notify();
+    }
+
+    fn drag_to(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let Some(drag) = self.drag.as_ref() else {
+            return;
+        };
+        if !event.dragging() {
+            // ボタンを離したのを取り逃した(ウィンドウ外で離したなど)ので終わりにする。
+            self.drag = None;
+            cx.notify();
+            return;
+        }
+        let max = self.scroll_handle.max_offset();
+        let (x, y) = dragged_scroll(
+            drag.scroll,
+            drag.mouse,
+            (f32::from(event.position.x), f32::from(event.position.y)),
+            (f32::from(max.x), f32::from(max.y)),
+        );
+        self.set_scroll(x, y, cx);
+    }
+
+    fn end_drag(&mut self, cx: &mut Context<Self>) {
+        if self.drag.take().is_some() {
+            cx.notify();
+        }
+    }
+
     /// ズーム方式を切り替える。`Manual`以外は次の描画で倍率が計算される。
     pub(crate) fn set_zoom_mode(&mut self, mode: ZoomMode, cx: &mut Context<Self>) {
         self.zoom_mode = mode;
@@ -439,11 +485,20 @@ impl Render for PdfView {
                     .overflow_scroll()
                     .track_scroll(&self.scroll_handle)
                     .on_scroll(cx.listener(Self::on_scroll))
-                    .on_mouse_down(
+                    .cursor(if self.drag.is_some() {
+                        CursorStyle::ClosedHand
+                    } else {
+                        CursorStyle::OpenHand
+                    })
+                    .on_mouse_down(MouseButton::Left, cx.listener(Self::start_drag))
+                    .on_mouse_move(cx.listener(|this, event, _, cx| this.drag_to(event, cx)))
+                    .on_mouse_up(
                         MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            window.focus(&this.focus_handle, cx);
-                        }),
+                        cx.listener(|this, _, _, cx| this.end_drag(cx)),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| this.end_drag(cx)),
                     )
                     .child(content),
             )
