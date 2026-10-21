@@ -5,30 +5,32 @@ mod titlebar;
 
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
 
-use gpui::{App, AppContext as _, Bounds, Focusable as _, WindowBounds, WindowOptions, px, size};
+use gpui::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
 use gpui_platform::application;
 use pdf_core::PdfDocument;
-use pdf_viewer::PdfView;
 
 use app_window::AppWindow;
 
-const USAGE: &str = "使い方: pdf_view_app <file.pdf>";
+const USAGE: &str = "使い方: pdf_view_app [file.pdf]";
 
 /// コマンドライン引数(プログラム名を除く)から、開くPDFのパスを取り出す。
-fn pdf_path_from_args(mut args: impl Iterator<Item = String>) -> Result<PathBuf, String> {
-    let path = args.next().ok_or_else(|| USAGE.to_string())?;
+/// 引数がなければ`None`(PDFを開かずに起動する)。
+fn pdf_path_from_args(mut args: impl Iterator<Item = String>) -> Result<Option<PathBuf>, String> {
+    let Some(path) = args.next() else {
+        return Ok(None);
+    };
     if args.next().is_some() {
         return Err(USAGE.to_string());
     }
-    Ok(PathBuf::from(path))
+    Ok(Some(PathBuf::from(path)))
 }
 
-fn open_window(document: Arc<PdfDocument>, title: String, cx: &mut App) {
+fn open_window(initial: Option<(PathBuf, Arc<PdfDocument>)>, cx: &mut App) {
     let bounds = Bounds::centered(None, size(px(900.), px(1000.)), cx);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(gpui::TitlebarOptions {
-            title: Some(title.clone().into()),
+            title: Some("PDF Viewer".into()),
             ..Default::default()
         }),
         // 枠(タイトルバー)は自前で描画する。
@@ -36,10 +38,7 @@ fn open_window(document: Arc<PdfDocument>, title: String, cx: &mut App) {
         ..Default::default()
     };
     cx.open_window(options, |window, cx| {
-        let view = cx.new(|cx| PdfView::new(document, cx));
-        // キーボード操作(ページ移動・ズーム)を受けられるよう、最初からフォーカスする。
-        window.focus(&view.focus_handle(cx), cx);
-        cx.new(|_| AppWindow::new(title.into(), view))
+        cx.new(|cx| AppWindow::new(initial, window, cx))
     })
     .expect("ウィンドウを開けませんでした");
     cx.activate(true);
@@ -53,19 +52,20 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let document = match PdfDocument::open(&path) {
-        Ok(document) => Arc::new(document),
-        Err(e) => {
-            eprintln!("{}: {e}", path.display());
-            return ExitCode::FAILURE;
-        }
+    // 起動時に指定されたファイルが開けないときは、ウィンドウを出さずにエラー終了する。
+    let initial = match path {
+        Some(path) => match PdfDocument::open(&path) {
+            Ok(document) => Some((path, Arc::new(document))),
+            Err(e) => {
+                eprintln!("{}: {e}", path.display());
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
     };
-    let title = path
-        .file_name()
-        .map_or_else(|| "PDF".into(), |n| n.to_string_lossy().into_owned());
     application().run(move |cx: &mut App| {
         pdf_viewer::init(cx);
-        open_window(document, title, cx);
+        open_window(initial, cx);
     });
     ExitCode::SUCCESS
 }
@@ -85,13 +85,13 @@ mod tests {
     fn single_argument_is_the_path() {
         assert_eq!(
             pdf_path_from_args(args(&["a.pdf"])),
-            Ok(PathBuf::from("a.pdf"))
+            Ok(Some(PathBuf::from("a.pdf")))
         );
     }
 
     #[test]
-    fn no_argument_shows_usage() {
-        assert_eq!(pdf_path_from_args(args(&[])), Err(USAGE.to_string()));
+    fn no_argument_opens_without_a_file() {
+        assert_eq!(pdf_path_from_args(args(&[])), Ok(None));
     }
 
     #[test]
