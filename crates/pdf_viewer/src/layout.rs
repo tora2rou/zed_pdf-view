@@ -71,6 +71,15 @@ impl Layout {
         first..last.max(first)
     }
 
+    /// 内容上の点`(x, y)`にあるページと、そのページ内での位置(ページの左上が原点)。
+    /// ページの外(余白や隙間)なら`None`。
+    pub fn hit_page(&self, x: f32, y: f32) -> Option<(usize, f32, f32)> {
+        let index = self.pages.partition_point(|p| p.bottom() <= y);
+        let page = self.pages.get(index)?;
+        let inside = y >= page.top && x >= page.left && x < page.left + page.width;
+        inside.then(|| (index, x - page.left, y - page.top))
+    }
+
     /// `scroll_top`を、実際にスクロールできる範囲(0〜内容の高さ−表示の高さ)に収める。
     ///
     /// GPUIは、勢いよくスクロールした直後に1フレームだけ範囲外の位置を返すことがある
@@ -202,5 +211,26 @@ mod tests {
         assert_eq!(l.visible_range(9999.0, 200.0), 3..3);
         let clamped = l.clamp_scroll_top(9999.0, 200.0);
         assert_eq!(l.visible_range(clamped, 200.0), 2..3);
+    }
+
+    #[test]
+    fn hit_page_returns_page_local_coordinates() {
+        let l = compute(&SIZES, 1.0, 0.0);
+        // ページ0は(12, 12)から 100x200
+        assert_eq!(l.hit_page(12.0, 12.0), Some((0, 0.0, 0.0)));
+        assert_eq!(l.hit_page(50.0, 112.0), Some((0, 38.0, 100.0)));
+        // ページ1は幅50で中央揃え: left = (124 - 50) / 2 = 37、top = 224
+        assert_eq!(l.hit_page(40.0, 230.0), Some((1, 3.0, 6.0)));
+    }
+
+    #[test]
+    fn hit_page_misses_margins_and_gaps() {
+        let l = compute(&SIZES, 1.0, 0.0);
+        assert_eq!(l.hit_page(5.0, 50.0), None); // 左の余白
+        assert_eq!(l.hit_page(50.0, 5.0), None); // 上の余白
+        assert_eq!(l.hit_page(50.0, 215.0), None); // ページ間の隙間
+        assert_eq!(l.hit_page(20.0, 230.0), None); // 幅の狭いページの左の空き
+        assert_eq!(l.hit_page(50.0, 9999.0), None); // 末尾より下
+        assert_eq!(compute(&[], 1.0, 0.0).hit_page(10.0, 10.0), None);
     }
 }

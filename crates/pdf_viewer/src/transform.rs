@@ -36,6 +36,27 @@ impl Rotation {
         matches!(self, Self::Deg90 | Self::Deg270)
     }
 
+    /// 回転後の画像上の点`(x, y)`を、回転前の画像上の点に戻す。
+    /// `base_size`は回転前の画像の大きさ(幅, 高さ)。連続値の座標で、画素の中心の補正はしない。
+    pub fn to_base(self, (width, height): (f32, f32), (x, y): (f32, f32)) -> (f32, f32) {
+        match self {
+            Self::Deg0 => (x, y),
+            Self::Deg90 => (y, height - x),
+            Self::Deg180 => (width - x, height - y),
+            Self::Deg270 => (width - y, x),
+        }
+    }
+
+    /// 回転前の画像上の点を、回転後の画像上の点にする(`to_base`の逆)。
+    pub fn from_base(self, (width, height): (f32, f32), (x, y): (f32, f32)) -> (f32, f32) {
+        match self {
+            Self::Deg0 => (x, y),
+            Self::Deg90 => (height - y, x),
+            Self::Deg180 => (width - x, height - y),
+            Self::Deg270 => (y, width - x),
+        }
+    }
+
     /// 回転後のページサイズ(幅, 高さ)。
     pub fn apply_to_size(self, (width, height): (f32, f32)) -> (f32, f32) {
         if self.swaps_axes() {
@@ -142,6 +163,34 @@ mod tests {
         ] {
             assert_eq!(r.clockwise().counterclockwise(), r);
         }
+    }
+
+    #[test]
+    fn points_round_trip_through_every_rotation() {
+        let base = (200.0, 100.0);
+        for r in [
+            Rotation::Deg0,
+            Rotation::Deg90,
+            Rotation::Deg180,
+            Rotation::Deg270,
+        ] {
+            for p in [(0.0, 0.0), (10.0, 70.0), (200.0, 100.0), (123.5, 45.25)] {
+                assert_eq!(r.to_base(base, r.from_base(base, p)), p, "{r:?} {p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn rotating_a_point_matches_rotating_the_image() {
+        // 200x100の画像の左上(0,0)の画素は、時計回り90度で右上(100,0)になる
+        let base = (200.0, 100.0);
+        assert_eq!(Rotation::Deg90.from_base(base, (0.0, 0.0)), (100.0, 0.0));
+        // 左下(0,100)は左上(0,0)へ
+        assert_eq!(Rotation::Deg90.from_base(base, (0.0, 100.0)), (0.0, 0.0));
+        // 270度: 左上(0,0)は左下(0,200)へ
+        assert_eq!(Rotation::Deg270.from_base(base, (0.0, 0.0)), (0.0, 200.0));
+        // 180度: 左上は右下へ
+        assert_eq!(Rotation::Deg180.from_base(base, (0.0, 0.0)), (200.0, 100.0));
     }
 
     #[test]
