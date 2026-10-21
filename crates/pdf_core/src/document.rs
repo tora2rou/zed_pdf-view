@@ -129,6 +129,12 @@ impl PdfDocument {
         self.links.get(index)?.get().map(Vec::as_slice)
     }
 
+    /// ページ`index`の文字が取り出し済みならそれを返す。未取り出しなら`None`で、待たずに戻る
+    /// (画面を更新するスレッドで、重い取り出しを待たないために使う)。
+    pub fn page_text_if_ready(&self, index: usize) -> Option<&PageText> {
+        self.texts.get(index)?.get()
+    }
+
     /// ページ`index`の文字と位置。初回だけ取り出す(ページの解釈が要るので、重いことがある)。
     pub fn page_text(&self, index: usize) -> Result<&PageText, PdfError> {
         let cell = self.texts.get(index).ok_or(PdfError::PageOutOfRange {

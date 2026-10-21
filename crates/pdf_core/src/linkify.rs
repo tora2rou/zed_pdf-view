@@ -256,6 +256,7 @@ mod tests {
                         height: 12.0,
                     },
                     gap: if i == 0 { *first_gap } else { Gap::None },
+                    dir: (1.0, 0.0),
                 });
                 x += 10.0;
             }

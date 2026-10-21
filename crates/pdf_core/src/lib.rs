@@ -7,6 +7,7 @@ mod linkify;
 mod links;
 mod outline;
 mod render;
+mod selection;
 mod text;
 
 pub use document::PdfDocument;

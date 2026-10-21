@@ -43,6 +43,8 @@ pub struct TextChar {
     pub rect: LinkRect,
     /// 直前の文字との区切り。ページの最初の文字は`Line`。
     pub gap: Gap,
+    /// 文字が進む向き(表示座標の単位ベクトル)。横書きなら(1, 0)。回転したページや縦書きで変わる。
+    pub dir: (f32, f32),
 }
 
 /// ページの文字。PDFの描画順(通常は読む順)に並ぶ。
@@ -103,7 +105,13 @@ impl<'a> Device<'a> for TextCollector {
                 continue;
             };
             let gap = self.gap_from_previous(matrix * Point::ORIGIN);
-            self.chars.push(TextChar { text, rect, gap });
+            let dir = advance_direction(matrix);
+            self.chars.push(TextChar {
+                text,
+                rect,
+                gap,
+                dir,
+            });
             self.previous = Some((matrix, advance));
         }
     }
@@ -114,6 +122,19 @@ impl<'a> Device<'a> for TextCollector {
     fn draw_image(&mut self, _: Image<'a, '_>, _: ImageDrawProps<'a>) {}
     fn pop_clip(&mut self) {}
     fn pop_transparency_group(&mut self) {}
+}
+
+/// 文字が進む向き(グリフのx軸が表示座標でどちらを向くか)の単位ベクトル。
+fn advance_direction(matrix: Affine) -> (f32, f32) {
+    let origin = matrix * Point::ORIGIN;
+    let along = matrix * Point::new(1.0, 0.0);
+    let (dx, dy) = (along.x - origin.x, along.y - origin.y);
+    let length = dx.hypot(dy);
+    if length > 1e-9 {
+        ((dx / length) as f32, (dy / length) as f32)
+    } else {
+        (1.0, 0.0)
+    }
 }
 
 /// グリフの箱(送り幅 × アセンダ/ディセンダ)を表示座標に直した、外接矩形。有限でなければ`None`。

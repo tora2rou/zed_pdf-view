@@ -72,3 +72,56 @@ fn rotated_page_text_and_boxes() {
         "first {first:?} last {last:?}"
     );
 }
+
+/// 取り出した文字の位置で、位置→文字(キャレット)の変換が合う。
+#[test]
+fn caret_at_a_position_finds_the_right_character() {
+    let doc = PdfDocument::open(FIXTURE).unwrap();
+    let text = doc.page_text(0).unwrap();
+    // 1行目 "See https://..." の 'h'(5文字目、添字4)の箱の左半分と右半分
+    let h = &text.chars[4];
+    assert_eq!(h.text, "h");
+    let (cx, cy) = (
+        h.rect.x + h.rect.width / 2.0,
+        h.rect.y + h.rect.height / 2.0,
+    );
+    assert_eq!(text.caret_at(cx - 1.0, cy), Some(4));
+    assert_eq!(text.caret_at(cx + 1.0, cy), Some(5));
+    // 1行目全体を選ぶと、その行の文字列になる
+    let line = text.line_range(4);
+    assert_eq!(
+        text.string_in(line),
+        "See https://example.com/a/doc.pdf for details."
+    );
+}
+
+/// 回転したページでは、文字の進む向きが下向きになり、キャレットもその向きに従う。
+#[test]
+fn caret_follows_the_direction_on_a_rotated_page() {
+    let doc = PdfDocument::open(FIXTURE).unwrap();
+    let text = doc.page_text(1).unwrap();
+    let first = &text.chars[0];
+    assert!(
+        first.dir.0.abs() < 0.01 && first.dir.1 > 0.99,
+        "{:?}",
+        first.dir
+    );
+    let (cx, cy) = (
+        first.rect.x + first.rect.width / 2.0,
+        first.rect.y + first.rect.height / 2.0,
+    );
+    // 進む向き(下)の手前(上)は0、先(下)は1
+    assert_eq!(text.caret_at(cx, cy - 1.0), Some(0));
+    assert_eq!(text.caret_at(cx, cy + 1.0), Some(1));
+    // 範囲選択の文字列は、回転していても読める順
+    assert_eq!(text.string_in(0..7), "Rotated");
+}
+
+#[test]
+fn text_is_available_without_waiting_only_after_it_was_extracted() {
+    let doc = PdfDocument::open(FIXTURE).unwrap();
+    assert!(doc.page_text_if_ready(0).is_none());
+    doc.page_text(0).unwrap();
+    assert!(doc.page_text_if_ready(0).is_some());
+    assert!(doc.page_text_if_ready(99).is_none());
+}
