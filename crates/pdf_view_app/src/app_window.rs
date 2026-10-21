@@ -29,7 +29,9 @@ impl AppWindow {
 impl Render for AppWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // OS側が枠を描いてくれる環境(サーバーサイド装飾)では、二重にならないよう何も足さない。
-        let client_side = matches!(window.window_decorations(), Decorations::Client { .. });
+        // 全画面中は、タイトルバーもリサイズ領域も要らない。
+        let client_side = matches!(window.window_decorations(), Decorations::Client { .. })
+            && !window.is_fullscreen();
         let maximized = window.is_maximized();
 
         div()
