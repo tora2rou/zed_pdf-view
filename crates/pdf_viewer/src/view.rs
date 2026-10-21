@@ -1,9 +1,9 @@
-use std::{collections::HashSet, sync::Arc, time::Instant};
+use std::{collections::HashSet, ops::Range, sync::Arc, time::Instant};
 
 use gpui::{
-    App, AppContext as _, Context, CursorStyle, FocusHandle, Focusable, MouseButton,
-    MouseDownEvent, MouseMoveEvent, Pixels, Point, ScrollDelta, ScrollEvent, ScrollHandle, Task,
-    Window, div, img, point, prelude::*, px, rgb,
+    App, AppContext as _, Context, CursorStyle, Div, FocusHandle, Focusable, MouseButton,
+    MouseDownEvent, MouseMoveEvent, Pixels, Point, ScrollDelta, ScrollEvent, ScrollHandle,
+    Stateful, Task, Window, div, img, point, prelude::*, px, rgb,
 };
 use pdf_core::PdfDocument;
 
@@ -496,37 +496,24 @@ impl Focusable for PdfView {
     }
 }
 
-impl Render for PdfView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.page_input.is_some() && !self.input_focus.is_focused(window) {
-            // 入力欄の外をクリックするなどしてフォーカスが外れたら、編集をやめる。
-            self.page_input = None;
-        }
-        if let Some(offset) = self.pending_offset.take() {
-            self.scroll_handle.set_offset(offset);
-        }
-        let viewport = self.viewport_size(window);
-        if viewport != self.last_viewport {
-            // ページ領域の大きさが変わった(ウィンドウのリサイズ、サイドバーの開閉など)。
-            // 測った大きさは次のフレームで使えるようになるので、もう一度描画して追従させる。
-            self.last_viewport = viewport;
-            cx.notify();
-        }
-        let now = cx.background_executor().now();
-        self.apply_fit(viewport, now);
-        let (viewport_width, viewport_height) = viewport;
-        let layout = self.layout(viewport_width);
-        let (_, scroll_top) = self.scroll_position();
-        let visible = layout.visible_range(scroll_top, viewport_height);
-        let scale = self.zoom * window.scale_factor();
-        let key = self.images.key(scale, self.appearance);
-        let keep = with_prefetch(&visible, self.page_sizes.len());
+impl PdfView {
+    /// 見えているページを先に、続けて先読み分の描画を要求する。画面外のページの画像は破棄する。
+    ///
+    /// ズーム操作の直後は、仮表示できる古い画像があるページの再描画を少し待つ
+    /// (連続操作で、すぐ古くなる描画をしないため)。
+    fn request_page_images(
+        &mut self,
+        visible: &Range<usize>,
+        key: ImageKey,
+        scale: f32,
+        now: Instant,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let keep = with_prefetch(visible, self.page_sizes.len());
         for old in self.images.retain(&keep) {
             window.drop_image(old).ok();
         }
-
-        // 見えているページを先に、続けて先読み分の描画を要求する。ズーム操作の直後は、
-        // 仮表示できる古い画像があるページの再描画を少し待つ(連続操作で無駄に描かない)。
         let settling = self
             .last_zoom_change
             .and_then(|changed| settle_remaining(now.saturating_duration_since(changed)));
@@ -552,7 +539,10 @@ impl Render for PdfView {
             Some(remaining) => self.schedule_settle(remaining, window, cx),
             None => self.settle_task = None,
         }
+    }
 
+    /// 見えているページを、レイアウトの位置に並べた要素にする。
+    fn render_pages(&self, layout: &Layout, visible: Range<usize>, key: &ImageKey) -> Div {
         let placeholder = if self.appearance.invert {
             0x1a1a1a
         } else {
@@ -567,7 +557,7 @@ impl Render for PdfView {
                 .top(px(rect.top))
                 .w(px(rect.width))
                 .h(px(rect.height));
-            let page = match self.images.lookup(index, &key) {
+            let page = match self.images.lookup(index, key) {
                 // 古い画像は、GPUが新しいページの大きさに引き伸ばして仮に表示する。
                 Lookup::Fresh(image) | Lookup::Stale(image) => page.child(img(image).size_full()),
                 Lookup::Failed(message) => page
@@ -578,20 +568,16 @@ impl Render for PdfView {
             };
             content = content.child(page);
         }
+        content
+    }
 
-        let current = self.current_page(&layout, viewport_height);
-        let toolbar = self.render_toolbar(current, cx);
-        // 入力欄の編集中は、矢印キーなどがページ移動に奪われないようキーコンテキストを外す。
-        let editing = self.page_input.is_some();
-
-        let sidebar = self
-            .sidebar_open
-            .then(|| self.render_sidebar(current, window, cx));
-        let pages_area = div()
+    /// ページを並べた`content`を包む、スクロール・ズーム・ドラッグ操作を受ける領域。
+    fn render_pages_area(&self, content: Div, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
             .id("pdf-scroll")
             .flex_1()
-            .min_h_0()
-            .w_full()
+            .min_w_0()
+            .h_full()
             .overflow_scroll()
             .track_scroll(&self.scroll_handle)
             .on_scroll(cx.listener(Self::on_scroll))
@@ -611,8 +597,46 @@ impl Render for PdfView {
                 cx.listener(|this, _, _, cx| this.end_drag(cx)),
             )
             .child(content)
-            .flex_1()
-            .min_w_0();
+    }
+}
+
+impl Render for PdfView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.page_input.is_some() && !self.input_focus.is_focused(window) {
+            // 入力欄の外をクリックするなどしてフォーカスが外れたら、編集をやめる。
+            self.page_input = None;
+        }
+        if let Some(offset) = self.pending_offset.take() {
+            self.scroll_handle.set_offset(offset);
+        }
+        let viewport = self.viewport_size(window);
+        if viewport != self.last_viewport {
+            // ページ領域の大きさが変わった(ウィンドウのリサイズ、サイドバーの開閉など)。
+            // 測った大きさは次のフレームで使えるようになるので、もう一度描画して追従させる。
+            self.last_viewport = viewport;
+            cx.notify();
+        }
+        let now = cx.background_executor().now();
+        self.apply_fit(viewport, now);
+        let (viewport_width, viewport_height) = viewport;
+        let layout = self.layout(viewport_width);
+        let (_, scroll_top) = self.scroll_position();
+        let visible = layout.visible_range(scroll_top, viewport_height);
+        let scale = self.zoom * window.scale_factor();
+        let key = self.images.key(scale, self.appearance);
+        self.request_page_images(&visible, key, scale, now, window, cx);
+
+        let content = self.render_pages(&layout, visible, &key);
+
+        let current = self.current_page(&layout, viewport_height);
+        let toolbar = self.render_toolbar(current, cx);
+        // 入力欄の編集中は、矢印キーなどがページ移動に奪われないようキーコンテキストを外す。
+        let editing = self.page_input.is_some();
+
+        let sidebar = self
+            .sidebar_open
+            .then(|| self.render_sidebar(current, window, cx));
+        let pages_area = self.render_pages_area(content, cx);
 
         div()
             .when(!editing, |d| d.key_context(KEY_CONTEXT))
