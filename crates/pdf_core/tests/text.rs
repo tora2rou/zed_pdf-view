@@ -125,3 +125,18 @@ fn text_is_available_without_waiting_only_after_it_was_extracted() {
     assert!(doc.page_text_if_ready(0).is_some());
     assert!(doc.page_text_if_ready(99).is_none());
 }
+
+/// 太字を擬似的に表すため、同じ文字を少しずらして重ね描きしたPDFでも、文字は二重に取れない。
+/// 一方、本当に同じ文字が隣り合っているもの("ll", "oo", "kk")は、そのまま残る。
+#[test]
+fn overdrawn_text_is_not_duplicated() {
+    let doc = PdfDocument::open(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/with_double_strike.pdf"
+    ))
+    .unwrap();
+    assert_eq!(
+        doc.page_text(0).unwrap().to_plain_string(),
+        "Heading text\nHello bookkeeper"
+    );
+}

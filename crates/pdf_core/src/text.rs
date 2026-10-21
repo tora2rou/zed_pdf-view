@@ -23,6 +23,13 @@ const FALLBACK_ADVANCE: f64 = 500.0;
 const ADJACENT_TOLERANCE: f64 = 150.0;
 /// 次の文字のベースラインが、これ以上ずれていたら別の行とみなす。
 const SAME_LINE_TOLERANCE: f64 = 300.0;
+/// 同じ文字が重なって描かれた(太字を擬似的に表す重ね描きなど)とみなす、中心のずれの上限。
+/// 文字の高さに対する割合と、幅に対する割合の小さい方。細い文字("l"など)が隣り合っても、
+/// 本当に別の文字として残るよう、幅にも比例させる。
+const OVERDRAW_MAX_OFFSET_OF_HEIGHT: f32 = 0.10;
+const OVERDRAW_MAX_OFFSET_OF_WIDTH: f32 = 0.35;
+/// 重ね描きを探す、直近の文字数。
+const OVERDRAW_LOOKBACK: usize = 4096;
 
 /// 直前の文字との区切り。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +68,23 @@ struct TextCollector {
 }
 
 impl TextCollector {
+    /// 同じ文字が、ほぼ同じ位置にすでにあるか(重ね描き)。
+    fn is_overdrawn(&self, text: &str, rect: &LinkRect) -> bool {
+        let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
+        self.chars.iter().rev().take(OVERDRAW_LOOKBACK).any(|c| {
+            if c.text != text {
+                return false;
+            }
+            let (ox, oy) = (
+                c.rect.x + c.rect.width / 2.0,
+                c.rect.y + c.rect.height / 2.0,
+            );
+            let tolerance = (OVERDRAW_MAX_OFFSET_OF_HEIGHT * rect.height)
+                .min(OVERDRAW_MAX_OFFSET_OF_WIDTH * rect.width);
+            (cx - ox).hypot(cy - oy) <= tolerance
+        })
+    }
+
     fn gap_from_previous(&self, origin: Point) -> Gap {
         let Some((previous, advance)) = self.previous else {
             return Gap::Line;
@@ -104,6 +128,9 @@ impl<'a> Device<'a> for TextCollector {
             let Some(rect) = glyph_rect(matrix, advance) else {
                 continue;
             };
+            if self.is_overdrawn(&text, &rect) {
+                continue;
+            }
             let gap = self.gap_from_previous(matrix * Point::ORIGIN);
             let dir = advance_direction(matrix);
             self.chars.push(TextChar {
