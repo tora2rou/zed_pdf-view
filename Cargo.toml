@@ -14,3 +14,4 @@ hayro = "0.8"
 thiserror = "2"
 lru = "0.19"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "fae8a354829e56bf5615fedfa8cdfecb124550c4" }
+image = { version = "0.25", default-features = false }

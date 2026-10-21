@@ -1990,6 +1990,7 @@ name = "pdf_viewer"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "image",
  "pdf_core",
 ]
 
