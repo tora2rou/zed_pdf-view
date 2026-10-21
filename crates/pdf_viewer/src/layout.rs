@@ -71,6 +71,15 @@ impl Layout {
         first..last.max(first)
     }
 
+    /// `scroll_top`を、実際にスクロールできる範囲(0〜内容の高さ−表示の高さ)に収める。
+    ///
+    /// GPUIは、勢いよくスクロールした直後に1フレームだけ範囲外の位置を返すことがある
+    /// (次の描画で範囲内に戻る)。その位置から「見えているページ」を求めると空になり、
+    /// 保持している画像を全部捨てて描き直してしまう(画面が点滅する)ので、先に収める。
+    pub fn clamp_scroll_top(&self, scroll_top: f32, viewport_height: f32) -> f32 {
+        scroll_top.clamp(0.0, (self.height - viewport_height).max(0.0))
+    }
+
     /// 画面上端の位置`y`に最も近いページ(`y`がページ間の隙間なら直後のページ)。
     pub fn page_at(&self, y: f32) -> usize {
         let ix = self.pages.partition_point(|p| p.bottom() <= y);
@@ -174,5 +183,24 @@ mod tests {
     fn centered_scroll_is_zero_when_content_fits() {
         assert_eq!(centered_scroll_x(500.0, 600.0), 0.0);
         assert_eq!(centered_scroll_x(600.0, 600.0), 0.0);
+    }
+
+    #[test]
+    fn clamp_scroll_top_keeps_the_view_inside_the_content() {
+        let l = compute(&SIZES, 1.0, 0.0); // 内容の高さ = 24 + 500 + 24 = 548
+        assert_eq!(l.height, 548.0);
+        assert_eq!(l.clamp_scroll_top(100.0, 200.0), 100.0);
+        assert_eq!(l.clamp_scroll_top(-30.0, 200.0), 0.0); // 先頭より上
+        assert_eq!(l.clamp_scroll_top(9999.0, 200.0), 348.0); // 末尾より下
+        assert_eq!(l.clamp_scroll_top(50.0, 9999.0), 0.0); // 内容が画面に収まる
+    }
+
+    #[test]
+    fn overscrolled_position_still_sees_the_last_pages() {
+        let l = compute(&SIZES, 1.0, 0.0);
+        // 補正しないと「何も見えない」になる位置でも、補正後は末尾のページが見える
+        assert_eq!(l.visible_range(9999.0, 200.0), 3..3);
+        let clamped = l.clamp_scroll_top(9999.0, 200.0);
+        assert_eq!(l.visible_range(clamped, 200.0), 2..3);
     }
 }

@@ -621,6 +621,8 @@ impl Render for PdfView {
         let (viewport_width, viewport_height) = viewport;
         let layout = self.layout(viewport_width);
         let (_, scroll_top) = self.scroll_position();
+        // 勢いよくスクロールした直後の範囲外の位置を、そのまま使わない(画像を全部捨てて点滅するため)。
+        let scroll_top = layout.clamp_scroll_top(scroll_top, viewport_height);
         let visible = layout.visible_range(scroll_top, viewport_height);
         let scale = self.zoom * window.scale_factor();
         let key = self.images.key(scale, self.appearance);

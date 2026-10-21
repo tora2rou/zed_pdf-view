@@ -181,7 +181,9 @@ impl PdfView {
             }
         }
 
-        let scroll_top = -f32::from(self.thumb_scroll.offset().y);
+        // 勢いよくスクロールした直後の範囲外の位置を、そのまま使わない(画像を全部捨てて点滅するため)。
+        let scroll_top =
+            layout.clamp_scroll_top(-f32::from(self.thumb_scroll.offset().y), viewport_height);
         let visible = layout.visible_range(scroll_top, viewport_height);
         let keep = with_prefetch(&visible, self.page_sizes.len());
         for old in self.thumbs.retain(&keep) {
@@ -549,5 +551,78 @@ mod tests {
                 "no toggle at offset ({dx}, {dy})"
             );
         }
+    }
+
+    /// `count`ページの小さなPDFを一時ファイルに作る。
+    fn make_pdf(count: usize, name: &str) -> std::path::PathBuf {
+        let kids: String = (0..count).map(|i| format!("{} 0 R ", 3 + i)).collect();
+        let mut objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            format!("<< /Type /Pages /Kids [{kids}] /Count {count} >>"),
+        ];
+        objects.extend(
+            (0..count)
+                .map(|_| "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] >>".to_string()),
+        );
+        let mut pdf = String::from("%PDF-1.4\n");
+        let mut offsets = Vec::new();
+        for (i, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.push_str(&format!("{} 0 obj\n{object}\nendobj\n", i + 1));
+        }
+        let xref = pdf.len();
+        pdf.push_str(&format!(
+            "xref\n0 {}\n0000000000 65535 f \n",
+            objects.len() + 1
+        ));
+        for offset in offsets {
+            pdf.push_str(&format!("{offset:010} 00000 n \n"));
+        }
+        pdf.push_str(&format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        ));
+        let path =
+            std::env::temp_dir().join(format!("pdf_viewer_{name}_{}.pdf", std::process::id()));
+        std::fs::write(&path, pdf).unwrap();
+        path
+    }
+
+    /// 末尾を超えた(範囲外の)スクロール位置で描画されても、サムネイルの画像を捨てない。
+    /// (捨ててしまうと、位置が戻った次のフレームで全部描き直しになり、画面が点滅する。)
+    #[gpui::test]
+    fn overscrolling_the_thumbnail_list_keeps_its_images(cx: &mut TestAppContext) {
+        let path = make_pdf(40, "overscroll");
+        let (view, cx) = open_view(path.to_str().unwrap(), cx);
+        open_sidebar(&view, SidebarTab::Pages, cx);
+
+        // 末尾までスクロールして、末尾のサムネイルが描画されるのを待つ
+        view.update_in(cx, |this, _, cx| {
+            this.thumb_scroll.set_offset(point(px(0.0), px(-1.0e6)));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let last = 39;
+        let is_fresh = |view: &gpui::Entity<PdfView>, cx: &mut VisualTestContext| {
+            view.update_in(cx, |this, window, _| {
+                let scale = thumbnail_scale(this.page_sizes[last].0, window.scale_factor());
+                let key = this.thumbs.key(scale, Appearance::default());
+                matches!(this.thumbs.lookup(last, &key), Lookup::Fresh(_))
+            })
+        };
+        assert!(is_fresh(&view, cx), "the last thumbnail should be rendered");
+
+        // 範囲外の位置にして、1フレームだけ描画する(その間は描画タスクを進めない)
+        view.update_in(cx, |this, window, cx| {
+            this.thumb_scroll.set_offset(point(px(0.0), px(-1.0e6)));
+            cx.notify();
+            let _ = window;
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            is_fresh(&view, cx),
+            "the last thumbnail was dropped while overscrolled"
+        );
+        std::fs::remove_file(path).ok();
     }
 }
