@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["crates/pdf_core", "crates/pdf_viewer", "crates/pdf_view_app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+pdf_core = { path = "crates/pdf_core" }
+pdf_viewer = { path = "crates/pdf_viewer" }
