@@ -5,14 +5,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use lru::LruCache;
-
-use hayro::hayro_syntax::{Pdf, page::Page};
-
 use hayro::{
-    PixmapSettings, RenderCache, RenderSettings, hayro_interpret::InterpreterSettings,
+    PixmapSettings, RenderCache, RenderSettings,
+    hayro_interpret::InterpreterSettings,
+    hayro_syntax::{Pdf, page::Page},
     vello_cpu::color::palette::css::WHITE,
 };
+use lru::LruCache;
 
 use crate::{PdfError, RenderedPage};
 
