@@ -63,6 +63,12 @@ impl PdfDocument {
         Ok(rendered)
     }
 
+    /// キャッシュを使わずに描画する。サムネイルのように大量に作る画像で、
+    /// 本文用のキャッシュを押し出さないために使う。
+    pub fn render_page_uncached(&self, index: usize, scale: f32) -> Result<RenderedPage, PdfError> {
+        self.rasterize(index, scale)
+    }
+
     fn rasterize(&self, index: usize, scale: f32) -> Result<RenderedPage, PdfError> {
         let page = self.page(index)?;
         let (w, h) = page.render_dimensions();
