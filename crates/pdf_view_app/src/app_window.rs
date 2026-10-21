@@ -4,8 +4,8 @@ use std::{
 };
 
 use gpui::{
-    AppContext as _, Context, Decorations, Entity, Focusable as _, IntoElement, Render,
-    SharedString, Window, div, prelude::*, px, rgb,
+    AppContext as _, Context, Decorations, Entity, ExternalPaths, Focusable as _, IntoElement,
+    KeyBinding, PathPromptOptions, Render, SharedString, Window, actions, div, prelude::*, px, rgb,
 };
 use pdf_core::{PdfDocument, PdfError};
 use pdf_viewer::PdfView;
@@ -14,6 +14,25 @@ use crate::{
     recent::{RecentFiles, recent_files_path},
     resize::resize_handles,
 };
+
+actions!(
+    pdf_view_app,
+    [
+        /// ファイル選択ダイアログを開く。
+        OpenFile,
+    ]
+);
+
+/// `AppWindow`のキーコンテキスト名。
+const KEY_CONTEXT: &str = "PdfViewApp";
+
+/// アプリ固有のキーバインドを登録する。
+pub fn init(cx: &mut gpui::App) {
+    cx.bind_keys([
+        KeyBinding::new("ctrl-o", OpenFile, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-o", OpenFile, Some(KEY_CONTEXT)),
+    ]);
+}
 
 const BACKGROUND: u32 = 0x252525;
 const VIEWER_BACKGROUND: u32 = 0x3c3c3c;
@@ -118,6 +137,33 @@ impl AppWindow {
         .detach();
     }
 
+    /// ファイル選択ダイアログを出して、選ばれたPDFを開く。
+    pub(crate) fn open_file(&mut self, _: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Open PDF".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            // キャンセルされた場合と、ダイアログを出せなかった場合は何もしない。
+            if let Ok(Ok(Some(paths))) = selected.await
+                && let Some(path) = paths.into_iter().next()
+            {
+                this.update_in(cx, |this, window, cx| this.open_path(path, window, cx))
+                    .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// ウィンドウにドロップされたファイルのうち、先頭のものを開く。
+    fn on_drop(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = paths.paths().first() {
+            self.open_path(path.clone(), window, cx);
+        }
+    }
+
     /// PDFを開く前の案内。
     fn render_empty_state(&self) -> impl IntoElement + use<> {
         div()
@@ -147,6 +193,9 @@ impl Render for AppWindow {
         };
 
         div()
+            .key_context(KEY_CONTEXT)
+            .on_action(cx.listener(Self::open_file))
+            .on_drop(cx.listener(Self::on_drop))
             .relative()
             .size_full()
             .flex()

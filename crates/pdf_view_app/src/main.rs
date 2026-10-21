@@ -65,6 +65,7 @@ fn main() -> ExitCode {
     };
     application().run(move |cx: &mut App| {
         pdf_viewer::init(cx);
+        app_window::init(cx);
         open_window(initial, cx);
     });
     ExitCode::SUCCESS
