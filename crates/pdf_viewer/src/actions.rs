@@ -14,6 +14,7 @@ actions!(
         RotateCounterclockwise,
         ToggleDarkMode,
         ToggleFullscreen,
+        ToggleSidebar,
     ]
 );
 
@@ -41,5 +42,6 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-r", RotateCounterclockwise, ctx),
         KeyBinding::new("d", ToggleDarkMode, ctx),
         KeyBinding::new("f11", ToggleFullscreen, ctx),
+        KeyBinding::new("f9", ToggleSidebar, ctx),
     ]);
 }

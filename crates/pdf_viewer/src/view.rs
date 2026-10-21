@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{collections::HashSet, sync::Arc, time::Instant};
 
 use gpui::{
     App, AppContext as _, Context, CursorStyle, FocusHandle, Focusable, MouseButton,
@@ -17,8 +17,10 @@ use crate::{
         with_prefetch,
     },
     layout::{self, Layout},
+    outline_rows::OutlinePath,
     page_input::PageInput,
     pan::dragged_scroll,
+    sidebar::SidebarTab,
     toolbar::TOOLBAR_HEIGHT,
     transform::Appearance,
     zoom::{self, ZoomMode},
@@ -28,6 +30,25 @@ use crate::{
 const WHEEL_LINE_HEIGHT: f32 = 40.0;
 /// ページ情報の判定位置: 画面上端からこの割合だけ下にあるページを「現在のページ」とする。
 const CURRENT_PAGE_PROBE: f32 = 0.3;
+
+/// 描画結果の届け先。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RenderTarget {
+    /// 本文のページ。
+    Page,
+    /// サイドバーのサムネイル。
+    Thumbnail,
+}
+
+/// ページ1枚の描画要求。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RenderRequest {
+    pub index: usize,
+    pub key: ImageKey,
+    pub scale: f32,
+    pub target: RenderTarget,
+    pub mode: RenderMode,
+}
 
 /// ドラッグでスクロール中の状態。開始時のマウス位置とスクロール位置を覚えておく。
 struct DragState {
@@ -49,10 +70,23 @@ pub struct PdfView {
     pub(crate) appearance: Appearance,
     pub(crate) zoom: f32,
     pub(crate) zoom_mode: ZoomMode,
-    scroll_handle: ScrollHandle,
+    pub(crate) scroll_handle: ScrollHandle,
     /// 次の描画の冒頭で適用するスクロール位置(GPUIのスクロール処理との競合を避けるため遅延させる)。
     pending_offset: Option<Point<Pixels>>,
     images: PageImages,
+    /// サイドバーを表示しているか。
+    pub(crate) sidebar_open: bool,
+    pub(crate) sidebar_tab: SidebarTab,
+    /// サムネイルの画像(本文の画像とは別に持つ)。
+    pub(crate) thumbs: PageImages,
+    pub(crate) thumb_scroll: ScrollHandle,
+    pub(crate) outline_scroll: ScrollHandle,
+    /// 開いている目次の項目。
+    pub(crate) outline_expanded: HashSet<OutlinePath>,
+    /// サムネイル一覧を最後に追従させた現在のページ。`None`なら次の描画で追従し直す。
+    pub(crate) thumb_followed_page: Option<usize>,
+    /// 前回の描画で使ったページ領域の大きさ。変わったら描画し直す(フィット表示などを追従させる)。
+    last_viewport: (f32, f32),
     /// 最後にズーム倍率が変わった時刻。連続操作の途中で無駄な再描画をしないために使う。
     last_zoom_change: Option<Instant>,
     /// ズームが落ち着いたら再描画するための待ち時間タスク。
@@ -84,6 +118,14 @@ impl PdfView {
             scroll_handle: ScrollHandle::new(),
             pending_offset: None,
             images: PageImages::default(),
+            sidebar_open: false,
+            sidebar_tab: SidebarTab::default(),
+            thumbs: PageImages::default(),
+            thumb_scroll: ScrollHandle::new(),
+            outline_scroll: ScrollHandle::new(),
+            outline_expanded: HashSet::new(),
+            thumb_followed_page: None,
+            last_viewport: (0.0, 0.0),
             last_zoom_change: None,
             settle_task: None,
             focus_handle: cx.focus_handle(),
@@ -100,9 +142,11 @@ impl PdfView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        for old in self.images.clear() {
+        for old in self.images.clear().into_iter().chain(self.thumbs.clear()) {
             window.drop_image(old).ok();
         }
+        self.outline_expanded.clear();
+        self.thumb_followed_page = None;
         self.base_sizes = page_sizes_of(&document);
         self.page_sizes = self
             .base_sizes
@@ -337,24 +381,33 @@ impl PdfView {
     }
 
     /// ページ`index`の描画をバックグラウンドで始め、終わったら結果を受け取って再描画する。
-    fn spawn_render(
+    pub(crate) fn spawn_render(
         &mut self,
-        index: usize,
-        key: ImageKey,
-        scale: f32,
+        request: RenderRequest,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let RenderRequest {
+            index,
+            key,
+            scale,
+            target,
+            mode,
+        } = request;
         let document = self.document.clone();
         let appearance = self.appearance;
         cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
-                    render_page_image(&document, index, scale, appearance, RenderMode::Cached)
+                    render_page_image(&document, index, scale, appearance, mode)
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
-                if let Some(unused) = this.images.complete(index, key, result) {
+                let images = match target {
+                    RenderTarget::Page => &mut this.images,
+                    RenderTarget::Thumbnail => &mut this.thumbs,
+                };
+                if let Some(unused) = images.complete(index, key, result) {
                     // 置き換わった古い画像、または古くなって使われなかった画像。
                     window.drop_image(unused).ok();
                 }
@@ -453,6 +506,12 @@ impl Render for PdfView {
             self.scroll_handle.set_offset(offset);
         }
         let viewport = self.viewport_size(window);
+        if viewport != self.last_viewport {
+            // ページ領域の大きさが変わった(ウィンドウのリサイズ、サイドバーの開閉など)。
+            // 測った大きさは次のフレームで使えるようになるので、もう一度描画して追従させる。
+            self.last_viewport = viewport;
+            cx.notify();
+        }
         let now = cx.background_executor().now();
         self.apply_fit(viewport, now);
         let (viewport_width, viewport_height) = viewport;
@@ -479,7 +538,14 @@ impl Render for PdfView {
                 Lookup::Missing => true,
             };
             if needs_render && self.images.request(index, key) {
-                self.spawn_render(index, key, scale, window, cx);
+                let request = RenderRequest {
+                    index,
+                    key,
+                    scale,
+                    target: RenderTarget::Page,
+                    mode: RenderMode::Cached,
+                };
+                self.spawn_render(request, window, cx);
             }
         }
         match settling {
@@ -518,6 +584,36 @@ impl Render for PdfView {
         // 入力欄の編集中は、矢印キーなどがページ移動に奪われないようキーコンテキストを外す。
         let editing = self.page_input.is_some();
 
+        let sidebar = self
+            .sidebar_open
+            .then(|| self.render_sidebar(current, window, cx));
+        let pages_area = div()
+            .id("pdf-scroll")
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .overflow_scroll()
+            .track_scroll(&self.scroll_handle)
+            .on_scroll(cx.listener(Self::on_scroll))
+            .cursor(if self.drag.is_some() {
+                CursorStyle::ClosedHand
+            } else {
+                CursorStyle::OpenHand
+            })
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::start_drag))
+            .on_mouse_move(cx.listener(|this, event, _, cx| this.drag_to(event, cx)))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.end_drag(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.end_drag(cx)),
+            )
+            .child(content)
+            .flex_1()
+            .min_w_0();
+
         div()
             .when(!editing, |d| d.key_context(KEY_CONTEXT))
             .track_focus(&self.focus_handle)
@@ -532,6 +628,7 @@ impl Render for PdfView {
             .on_action(cx.listener(Self::rotate_counterclockwise))
             .on_action(cx.listener(Self::toggle_dark_mode))
             .on_action(cx.listener(Self::toggle_fullscreen))
+            .on_action(cx.listener(Self::toggle_sidebar))
             .flex()
             .flex_col()
             .size_full()
@@ -539,29 +636,13 @@ impl Render for PdfView {
             .child(toolbar)
             .child(
                 div()
-                    .id("pdf-scroll")
+                    .flex()
+                    .flex_row()
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .overflow_scroll()
-                    .track_scroll(&self.scroll_handle)
-                    .on_scroll(cx.listener(Self::on_scroll))
-                    .cursor(if self.drag.is_some() {
-                        CursorStyle::ClosedHand
-                    } else {
-                        CursorStyle::OpenHand
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(Self::start_drag))
-                    .on_mouse_move(cx.listener(|this, event, _, cx| this.drag_to(event, cx)))
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| this.end_drag(cx)),
-                    )
-                    .on_mouse_up_out(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| this.end_drag(cx)),
-                    )
-                    .child(content),
+                    .children(sidebar)
+                    .child(pages_area),
             )
     }
 }

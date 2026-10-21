@@ -7,7 +7,8 @@ use gpui::{
 
 use crate::{
     actions::{
-        NextPage, PreviousPage, RotateClockwise, ToggleDarkMode, ToggleFullscreen, ZoomIn, ZoomOut,
+        NextPage, PreviousPage, RotateClockwise, ToggleDarkMode, ToggleFullscreen, ToggleSidebar,
+        ZoomIn, ZoomOut,
     },
     page_input::PageInput,
     view::PdfView,
@@ -81,6 +82,7 @@ impl PdfView {
         let zoom_label = format!("{:.0}%", self.zoom * 100.0);
         let mode = self.zoom_mode;
         let dark = self.appearance.invert;
+        let sidebar_open = self.sidebar_open;
 
         div()
             .flex()
@@ -93,6 +95,14 @@ impl PdfView {
             .bg(rgb(BACKGROUND))
             .text_color(rgb(TEXT))
             .text_sm()
+            .child(
+                button("sidebar", "Side", sidebar_open).on_click(cx.listener(
+                    |this, _: &ClickEvent, window, cx| {
+                        this.toggle_sidebar(&ToggleSidebar, window, cx)
+                    },
+                )),
+            )
+            .child(div().w(px(16.0)))
             .child(button("prev-page", "‹", false).on_click(cx.listener(
                 |this, _: &ClickEvent, window, cx| this.previous_page(&PreviousPage, window, cx),
             )))
