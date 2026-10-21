@@ -1,0 +1,14 @@
+// Zedのタスク例。~/.config/zed/tasks.json (またはプロジェクトの .zed/tasks.json) に追加する。
+// `pdf_view_app` は `cargo install --path crates/pdf_view_app` などでPATHに入れておく。
+// PDFをエディタで開いた状態で `task: spawn` から実行すると、そのファイルが別ウィンドウで開く。
+[
+  {
+    "label": "PDFビューアで開く: $ZED_FILENAME",
+    "command": "pdf_view_app",
+    "args": ["$ZED_FILE"],
+    "use_new_terminal": false,
+    "allow_concurrent_runs": true,
+    "reveal": "never",
+    "hide": "on_success"
+  }
+]

@@ -1,6 +1,6 @@
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
 
-use gpui::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui::{App, AppContext as _, Bounds, Focusable as _, WindowBounds, WindowOptions, px, size};
 use gpui_platform::application;
 use pdf_core::PdfDocument;
 use pdf_viewer::PdfView;
@@ -26,8 +26,13 @@ fn open_window(document: Arc<PdfDocument>, title: String, cx: &mut App) {
         }),
         ..Default::default()
     };
-    cx.open_window(options, |_, cx| cx.new(|cx| PdfView::new(document, cx)))
-        .expect("ウィンドウを開けませんでした");
+    cx.open_window(options, |window, cx| {
+        let view = cx.new(|cx| PdfView::new(document, cx));
+        // キーボード操作(ページ移動・ズーム)を受けられるよう、最初からフォーカスする。
+        window.focus(&view.focus_handle(cx), cx);
+        view
+    })
+    .expect("ウィンドウを開けませんでした");
     cx.activate(true);
 }
 
@@ -49,7 +54,10 @@ fn main() -> ExitCode {
     let title = path
         .file_name()
         .map_or_else(|| "PDF".into(), |n| n.to_string_lossy().into_owned());
-    application().run(move |cx: &mut App| open_window(document, title, cx));
+    application().run(move |cx: &mut App| {
+        pdf_viewer::init(cx);
+        open_window(document, title, cx);
+    });
     ExitCode::SUCCESS
 }
 
