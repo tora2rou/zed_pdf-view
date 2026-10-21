@@ -72,7 +72,7 @@ pub struct PdfView {
     pub(crate) zoom_mode: ZoomMode,
     pub(crate) scroll_handle: ScrollHandle,
     /// 次の描画の冒頭で適用するスクロール位置(GPUIのスクロール処理との競合を避けるため遅延させる)。
-    pending_offset: Option<Point<Pixels>>,
+    pub(crate) pending_offset: Option<Point<Pixels>>,
     images: PageImages,
     /// サイドバーを表示しているか。
     pub(crate) sidebar_open: bool,
@@ -168,7 +168,7 @@ impl PdfView {
     }
 
     /// 現在のスクロール位置(正の値 = 内容を上/左にずらした量)。保留中の位置があればそちらを返す。
-    fn scroll_position(&self) -> (f32, f32) {
+    pub(crate) fn scroll_position(&self) -> (f32, f32) {
         let offset = self
             .pending_offset
             .unwrap_or_else(|| self.scroll_handle.offset());

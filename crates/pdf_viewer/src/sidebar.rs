@@ -79,10 +79,18 @@ impl PdfView {
     pub(crate) fn toggle_sidebar(
         &mut self,
         _: &ToggleSidebar,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let (viewport_width, _) = self.viewport_size(window);
         self.sidebar_open = !self.sidebar_open;
+        if !self.sidebar_open {
+            // 閉じるとページ領域が広がる。拡大して横にはみ出していたら、中央に戻す。
+            let widened = viewport_width + SIDEBAR_WIDTH;
+            let content_width = self.layout(widened).width;
+            let (_, y) = self.scroll_position();
+            self.set_scroll(layout::centered_scroll_x(content_width, widened), y, cx);
+        }
         // 開き直したときは、現在のページのサムネイルまでスクロールし直す。
         self.thumb_followed_page = None;
         cx.notify();
@@ -465,5 +473,43 @@ mod tests {
 
         let offset = view.read_with(cx, |this, _| f32::from(this.scroll_handle.offset().y));
         assert!(offset < 0.0, "did not scroll (offset y = {offset})");
+    }
+
+    /// 拡大して横にはみ出しているとき、サイドバーを閉じると本文が水平方向の中央に戻る。
+    #[gpui::test]
+    fn closing_the_sidebar_recenters_a_wide_page(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(TWO_PAGES, cx);
+        view.update_in(cx, |this, _, cx| this.set_zoom(5.0, (0.0, 0.0), cx));
+        cx.run_until_parked();
+        open_sidebar(&view, SidebarTab::Pages, cx);
+
+        // 左端までスクロールした状態で閉じる
+        view.update_in(cx, |this, _, cx| this.set_scroll(0.0, 0.0, cx));
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |this, _| f32::from(this.scroll_handle.offset().x)),
+            0.0
+        );
+        view.update_in(cx, |this, window, cx| {
+            this.toggle_sidebar(&ToggleSidebar, window, cx)
+        });
+        cx.run_until_parked();
+
+        let (offset, expected) = view.update_in(cx, |this, window, _| {
+            let (w, _) = this.viewport_size(window);
+            let content = this.layout(w).width;
+            (
+                f32::from(this.scroll_handle.offset().x),
+                -layout::centered_scroll_x(content, w),
+            )
+        });
+        assert!(
+            expected < -100.0,
+            "the page should overflow (expected {expected})"
+        );
+        assert!(
+            (offset - expected).abs() < 1.0,
+            "offset {offset}, expected {expected}"
+        );
     }
 }

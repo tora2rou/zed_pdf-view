@@ -86,6 +86,12 @@ impl Layout {
     }
 }
 
+/// 内容の幅が表示領域より広いとき、内容を水平方向の中央に置くスクロール量。
+/// 内容が収まるときは0。
+pub fn centered_scroll_x(content_width: f32, viewport_width: f32) -> f32 {
+    ((content_width - viewport_width) / 2.0).max(0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +163,16 @@ mod tests {
         assert_eq!(l.scroll_top_of(0), 0.0);
         assert_eq!(l.scroll_top_of(1), 200.0 + PAGE_GAP);
         assert_eq!(l.scroll_top_of(99), l.scroll_top_of(2));
+    }
+
+    #[test]
+    fn centered_scroll_splits_the_overflow() {
+        assert_eq!(centered_scroll_x(1000.0, 600.0), 200.0);
+    }
+
+    #[test]
+    fn centered_scroll_is_zero_when_content_fits() {
+        assert_eq!(centered_scroll_x(500.0, 600.0), 0.0);
+        assert_eq!(centered_scroll_x(600.0, 600.0), 0.0);
     }
 }
