@@ -76,19 +76,30 @@ impl TextChar {
 }
 
 impl PageText {
+    /// 点`(x, y)`(表示座標)に最も近い文字の番号。文字が1つも無ければ`None`。
+    /// 箱の中ならその文字、外なら箱までの距離が最も短い文字(同じなら中心に近い方)。
+    pub fn nearest_char(&self, x: f32, y: f32) -> Option<usize> {
+        self.chars
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                let key = |c: &TextChar| {
+                    let (cx, cy) = c.center();
+                    (c.distance_to(x, y), (cx - x).hypot(cy - y))
+                };
+                key(a)
+                    .partial_cmp(&key(b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(i, _)| i)
+    }
+
     /// 点`(x, y)`(表示座標)に最も近い、文字と文字の間(キャレット位置、0〜文字数)。
     /// 最も近い文字を探し、その文字の中心より進む向きの前か後ろかで、手前の位置か次の位置かを決める。
     /// 文字が1つも無ければ`None`。
     pub fn caret_at(&self, x: f32, y: f32) -> Option<usize> {
-        let (index, nearest) = self.chars.iter().enumerate().min_by(|(_, a), (_, b)| {
-            let key = |c: &TextChar| {
-                let (cx, cy) = c.center();
-                (c.distance_to(x, y), (cx - x).hypot(cy - y))
-            };
-            key(a)
-                .partial_cmp(&key(b))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })?;
+        let index = self.nearest_char(x, y)?;
+        let nearest = &self.chars[index];
         let (cx, cy) = nearest.center();
         let along = (x - cx) * nearest.dir.0 + (y - cy) * nearest.dir.1;
         Some(if along > 0.0 { index + 1 } else { index })
@@ -350,5 +361,14 @@ mod tests {
         assert_eq!(text.line_range(1), 0..3);
         assert_eq!(text.line_range(4), 3..5);
         assert_eq!(text.line_range(99), 5..5);
+    }
+
+    #[test]
+    fn nearest_char_is_the_char_under_the_point() {
+        let text = page(&["abc", "def"]);
+        assert_eq!(text.nearest_char(15.0, 6.0), Some(1)); // 'b'
+        assert_eq!(text.nearest_char(25.0, 20.0), Some(5)); // 'f'
+        assert_eq!(text.nearest_char(-100.0, 6.0), Some(0));
+        assert_eq!(PageText::default().nearest_char(0.0, 0.0), None);
     }
 }
