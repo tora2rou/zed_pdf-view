@@ -11,7 +11,7 @@ use crate::{
         ZoomIn, ZoomOut,
     },
     page_input::PageInput,
-    view::PdfView,
+    view::{PdfView, Tool},
     zoom::ZoomMode,
 };
 
@@ -83,6 +83,7 @@ impl PdfView {
         let mode = self.zoom_mode;
         let dark = self.appearance.invert;
         let sidebar_open = self.sidebar_open;
+        let tool = self.tool;
 
         div()
             .flex()
@@ -101,6 +102,17 @@ impl PdfView {
                         this.toggle_sidebar(&ToggleSidebar, window, cx)
                     },
                 )),
+            )
+            .child(div().w(px(16.0)))
+            .child(
+                button("tool-hand", "Hand", tool == Tool::Hand).on_click(
+                    cx.listener(|this, _: &ClickEvent, _, cx| this.set_tool(Tool::Hand, cx)),
+                ),
+            )
+            .child(
+                button("tool-select", "Select", tool == Tool::Select).on_click(
+                    cx.listener(|this, _: &ClickEvent, _, cx| this.set_tool(Tool::Select, cx)),
+                ),
             )
             .child(div().w(px(16.0)))
             .child(button("prev-page", "‹", false).on_click(cx.listener(

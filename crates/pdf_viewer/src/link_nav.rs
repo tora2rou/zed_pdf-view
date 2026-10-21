@@ -5,7 +5,7 @@ use pdf_core::LinkTarget;
 
 use crate::{
     link_hit::{is_click, link_at, openable_uri},
-    view::PdfView,
+    view::{PdfView, Tool},
 };
 
 impl PdfView {
@@ -88,6 +88,9 @@ impl PdfView {
         cx.notify();
         let up = (f32::from(event.position.x), f32::from(event.position.y));
         let click = is_click(drag.mouse, up);
+        if self.tool == Tool::Select {
+            self.finish_selection(cx);
+        }
         let target = self.link_target_at(event.position, window);
         log::debug!("mouse up: click={click}, link={target:?}");
         if click && let Some(target) = target {

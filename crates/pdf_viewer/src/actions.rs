@@ -15,6 +15,11 @@ actions!(
         ToggleDarkMode,
         ToggleFullscreen,
         ToggleSidebar,
+        CopySelection,
+        SelectAll,
+        ClearSelection,
+        HandTool,
+        SelectTool,
     ]
 );
 
@@ -43,5 +48,12 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("d", ToggleDarkMode, ctx),
         KeyBinding::new("f11", ToggleFullscreen, ctx),
         KeyBinding::new("f9", ToggleSidebar, ctx),
+        KeyBinding::new("ctrl-c", CopySelection, ctx),
+        KeyBinding::new("cmd-c", CopySelection, ctx),
+        KeyBinding::new("ctrl-a", SelectAll, ctx),
+        KeyBinding::new("cmd-a", SelectAll, ctx),
+        KeyBinding::new("escape", ClearSelection, ctx),
+        KeyBinding::new("h", HandTool, ctx),
+        KeyBinding::new("v", SelectTool, ctx),
     ]);
 }

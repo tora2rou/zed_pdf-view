@@ -20,6 +20,8 @@ use crate::{
     outline_rows::OutlinePath,
     page_input::PageInput,
     pan::dragged_scroll,
+    select::highlight_color,
+    selection::Selection,
     sidebar::SidebarTab,
     toolbar::TOOLBAR_HEIGHT,
     transform::Appearance,
@@ -30,6 +32,16 @@ use crate::{
 const WHEEL_LINE_HEIGHT: f32 = 40.0;
 /// ページ情報の判定位置: 画面上端からこの割合だけ下にあるページを「現在のページ」とする。
 const CURRENT_PAGE_PROBE: f32 = 0.3;
+
+/// マウスのドラッグで何をするか。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Tool {
+    /// ドラッグでページを動かす(スクロール)。
+    #[default]
+    Hand,
+    /// ドラッグで文字を選択する。
+    Select,
+}
 
 /// 描画結果の届け先。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +107,14 @@ pub struct PdfView {
     pub(crate) drag: Option<DragState>,
     /// マウスがリンクの上にあるか(カーソルの形を変える)。
     pub(crate) hovering_link: bool,
+    /// ドラッグの操作(手のひら / 文字の選択)。
+    pub(crate) tool: Tool,
+    /// 選択範囲(文字の選択ツールで選んだもの)。
+    pub(crate) selection: Option<Selection>,
+    /// 選択のドラッグ中か。
+    pub(crate) selecting: bool,
+    /// 最後に分かっているマウスの位置(スクロールしても選択の端を追従させるため)。
+    pub(crate) last_pointer: Option<Point<Pixels>>,
     /// リンクの読み込みを、すでにバックグラウンドで始めたページ。
     pub(crate) links_requested: HashSet<usize>,
     /// 画面下部にしばらく出す短いお知らせ(リンクを開いたことなど)。
@@ -138,6 +158,10 @@ impl PdfView {
             focus_handle: cx.focus_handle(),
             drag: None,
             hovering_link: false,
+            tool: Tool::default(),
+            selection: None,
+            selecting: false,
+            last_pointer: None,
             links_requested: HashSet::new(),
             notice: None,
             notice_task: None,
@@ -158,6 +182,8 @@ impl PdfView {
         }
         self.outline_expanded.clear();
         self.links_requested.clear();
+        self.selection = None;
+        self.selecting = false;
         self.thumb_followed_page = None;
         self.base_sizes = page_sizes_of(&document);
         self.page_sizes = self
@@ -359,21 +385,31 @@ impl PdfView {
     /// ページ領域でマウスを押したら、ビューにフォーカスを戻してドラッグスクロールを始める。
     fn start_drag(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus_handle, cx);
+        // クリックかドラッグかの判定のために、どちらのツールでも押した位置を覚えておく。
         self.drag = Some(DragState {
             mouse: (f32::from(event.position.x), f32::from(event.position.y)),
             scroll: self.scroll_position(),
         });
+        if self.tool == Tool::Select {
+            self.begin_selection(event, window, cx);
+        }
         cx.notify();
     }
 
-    fn drag_to(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+    fn drag_to(&mut self, event: &MouseMoveEvent, window: &Window, cx: &mut Context<Self>) {
         let Some(drag) = self.drag.as_ref() else {
             return;
         };
         if !event.dragging() {
             // ボタンを離したのを取り逃した(ウィンドウ外で離したなど)ので終わりにする。
             self.drag = None;
+            self.selecting = false;
             cx.notify();
+            return;
+        }
+        if self.tool == Tool::Select {
+            // 選択ツールでは、ページを動かさず、選択の端を動かす。
+            self.extend_selection(event.position, window, cx);
             return;
         }
         let max = self.scroll_handle.max_offset();
@@ -387,6 +423,7 @@ impl PdfView {
     }
 
     fn end_drag(&mut self, cx: &mut Context<Self>) {
+        self.selecting = false;
         if self.drag.take().is_some() {
             cx.notify();
         }
@@ -578,6 +615,16 @@ impl PdfView {
                     .child(message.to_string()),
                 Lookup::Missing => page.bg(rgb(placeholder)),
             };
+            // 選択範囲のハイライトを、ページの上に重ねる。
+            let page = page.children(self.selection_highlights(index).into_iter().map(|r| {
+                div()
+                    .absolute()
+                    .left(px(r.x * self.zoom))
+                    .top(px(r.y * self.zoom))
+                    .w(px(r.width * self.zoom))
+                    .h(px(r.height * self.zoom))
+                    .bg(highlight_color())
+            }));
             content = content.child(page);
         }
         content
@@ -593,16 +640,18 @@ impl PdfView {
             .overflow_scroll()
             .track_scroll(&self.scroll_handle)
             .on_scroll(cx.listener(Self::on_scroll))
-            .cursor(if self.drag.is_some() {
-                CursorStyle::ClosedHand
-            } else if self.hovering_link {
+            .cursor(if self.hovering_link {
                 CursorStyle::PointingHand
+            } else if self.tool == Tool::Select {
+                CursorStyle::IBeam
+            } else if self.drag.is_some() {
+                CursorStyle::ClosedHand
             } else {
                 CursorStyle::OpenHand
             })
             .on_mouse_down(MouseButton::Left, cx.listener(Self::start_drag))
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
-                this.drag_to(event, cx);
+                this.drag_to(event, window, cx);
                 this.update_link_hover(event.position, window, cx);
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::finish_press))
@@ -642,6 +691,7 @@ impl Render for PdfView {
         let key = self.images.key(scale, self.appearance);
         self.request_page_images(&visible, key, scale, now, window, cx);
         self.request_page_links(&visible, window, cx);
+        self.autoscroll_selection(window, cx);
 
         let content = self.render_pages(&layout, visible, &key);
 
@@ -670,6 +720,11 @@ impl Render for PdfView {
             .on_action(cx.listener(Self::toggle_dark_mode))
             .on_action(cx.listener(Self::toggle_fullscreen))
             .on_action(cx.listener(Self::toggle_sidebar))
+            .on_action(cx.listener(Self::copy_selection))
+            .on_action(cx.listener(Self::select_all))
+            .on_action(cx.listener(Self::clear_selection))
+            .on_action(cx.listener(Self::hand_tool))
+            .on_action(cx.listener(Self::select_tool))
             .relative()
             .flex()
             .flex_col()
