@@ -16,6 +16,9 @@ use pdf_core::PdfDocument;
 
 use app_window::{APP_NAME, AppWindow};
 
+/// デスクトップ環境がウィンドウを識別する名前。`packaging/linux/chihayaburu.desktop`のファイル名と同じ。
+const APP_ID: &str = "chihayaburu";
+
 const USAGE: &str = "使い方: pdf_view_app [file.pdf]";
 
 /// コマンドライン引数(プログラム名を除く)から、開くPDFのパスを取り出す。
@@ -46,6 +49,9 @@ fn open_window(startup: Startup, cx: &mut App) {
         }),
         // 枠(タイトルバー)は自前で描画する。
         window_decorations: Some(gpui::WindowDecorations::Client),
+        // Linuxで、ウィンドウと`chihayaburu.desktop`(アイコン・名前)を結びつける。
+        // Waylandのapp_id / X11のWM_CLASSになり、`.desktop`のファイル名と一致させる。
+        app_id: Some(APP_ID.into()),
         ..Default::default()
     };
     let Startup { document, error } = startup;
