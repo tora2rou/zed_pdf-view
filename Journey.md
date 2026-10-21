@@ -51,3 +51,19 @@ Zed向けGPUI製PDFビューアの開発過程を記録する。
 ## リファクタリング (①〜④後)
 - 目視確認: `two_pages.pdf` の1ページ目が表示された。赤い矩形が左下に出るのは正しい (PDFは左下原点、矩形は (100,100)-(300,300))。
 - 挙動を変えない整理のみ行った: `document.rs` のimport統合、`validate_scale` の切り出し、`RenderedPage::from_pixmap` への変換移動。テスト19件・clippy警告なし。
+
+## ⑤ スクロール + ズーム
+- 設計: 計算とGPUI依存部を分離した。
+  - `layout.rs` (全ページ縦並びの座標・可視範囲・現在ページ・ページ先頭位置) と `zoom.rs` (倍率の制限・ホイール係数・ズーム時のスクロール補正) は純粋関数で、単体テスト13件。
+  - `images.rs` (`PageImages`) は表示範囲内のページ画像だけを保持し、範囲外は `window.drop_image` で破棄する。
+  - `view.rs` (`PdfView`) と `actions.rs` が組み立てる。
+- スクロール: GPUIの `overflow_scroll` + `ScrollHandle` を使い、中身は全体サイズ固定の `relative` な div に、見えているページだけを `absolute` で置く (見えないページは何も描画しない)。`uniform_list` はページごとに高さが違うため使えない。
+- GPUIのAPIで分かったこと:
+  - このrevでは `ScrollWheelEvent` が `ScrollEvent` に、`on_scroll_wheel` が `on_scroll` に改名されている (旧名はdeprecated)。
+  - `overflow_scroll` の標準のスクロール処理は、ユーザーの `on_scroll` とは別に動く。Ctrl+ホイールでは両方が動いてしまうので、ズーム側は新しい位置を `pending_offset` に入れ、次の `render` の冒頭で `set_offset` して上書きする。
+  - `ScrollHandle::bounds()` は初回描画後でないと0。初回だけ `window.viewport_size()` で代用する。
+- 操作: Ctrl/Cmd+ホイール、Ctrl+`+`/`-`/`0` でズーム (0.25〜5.0、ステップ1.25倍、ビューポート中央または指の位置を保つ)。PageUp/PageDown/Home/End でページ移動。キーバインドは `pdf_viewer::init(cx)` で登録する (Zed組み込み時はkeymap jsonで定義する想定)。下部の帯に「現在のページ / 全ページ・倍率」を表示。
+- 既知の制約:
+  - 描画はメインスレッドで同期的に行う。大きいページを高倍率で見るとホイール操作が重くなる可能性がある。バックグラウンド描画 (`cx.background_spawn`) は今後の課題。
+  - ホイールズームごとに倍率が連続的に変わり、そのつどキャッシュに新しいキーが入る。LRUは16枚なので古いものから消える。
+- `examples/zed/tasks.json` に、現在のファイルを `pdf_view_app $ZED_FILE` で開くタスク例を追加。
