@@ -1,0 +1,12 @@
+# アイコン生成ツール。アプリのワークスペースとは独立している(ビルドに含めない)。
+[package]
+name = "chihayaburu-icon"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+skrifa = "=0.46.2"
+vello_cpu = { version = "=0.3.0", features = ["png"] }
