@@ -279,7 +279,7 @@ mod tests {
 
     /// 選択ツールで開いたビュー。文字の取り出し(バックグラウンド)が済むまで進める。
     fn open_selecting(cx: &mut TestAppContext) -> (gpui::Entity<PdfView>, &mut VisualTestContext) {
-        cx.update(|cx| crate::init(cx));
+        cx.update(crate::init);
         let document = Arc::new(PdfDocument::open(WITH_TEXT).unwrap());
         let (view, cx) = cx.add_window_view(|_, cx| PdfView::new(document, cx));
         view.update_in(cx, |this, _, cx| this.set_tool(Tool::Select, cx));
@@ -517,5 +517,27 @@ mod tests {
         view.update_in(cx, |this, window, cx| this.set_document(other, window, cx));
         assert!(view.read_with(cx, |this, _| this.selection.is_none()));
         let _ = ToggleSidebar;
+    }
+
+    /// 選択ツールのときも、リンクのクリックは効く(選択は始まらず、解除もされる)。
+    #[gpui::test]
+    fn links_still_work_with_the_select_tool(cx: &mut TestAppContext) {
+        let (view, cx) = open_selecting(cx);
+        let at = view.update_in(cx, |this, window, _| {
+            let rect = this.document.page_links(0).unwrap()[0].rect;
+            let (vw, _) = this.viewport_size(window);
+            let page = this.layout(vw).pages[0];
+            let b = this.scroll_handle.bounds();
+            point(
+                b.origin.x + px(page.left + rect.x + rect.width / 2.0),
+                b.origin.y + px(page.top + rect.y + rect.height / 2.0),
+            )
+        });
+        cx.simulate_click(at, Modifiers::none());
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some("https://example.com/a/doc.pdf")
+        );
+        assert!(view.read_with(cx, |this, _| this.selection.is_none()));
     }
 }
