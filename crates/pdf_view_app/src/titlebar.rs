@@ -15,34 +15,39 @@ const HOVER: u32 = 0x3a3a3a;
 const CLOSE_HOVER: u32 = 0xc42b1c;
 const BUTTON_WIDTH: f32 = 46.0;
 
+/// ボタン上のマウス押下が、タイトルバーのドラッグ移動を始めないようにする。
+fn block_drag(button: Stateful<gpui::Div>) -> Stateful<gpui::Div> {
+    button.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+
 fn control_button(id: &'static str) -> Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .w(px(BUTTON_WIDTH))
-        .h_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        // ボタン上のマウス押下がドラッグ移動を始めないようにする。
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    block_drag(
+        div()
+            .id(id)
+            .w(px(BUTTON_WIDTH))
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer(),
+    )
 }
 
 /// タイトルバー左側の文字ボタン(Open / Recent)。
 fn text_button(id: &'static str, label: &'static str) -> Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .h(px(24.0))
-        .mx(px(2.0))
-        .px(px(8.0))
-        .flex()
-        .items_center()
-        .rounded_sm()
-        .cursor_pointer()
-        .hover(|d| d.bg(rgb(HOVER)))
-        // ボタン上のマウス押下がドラッグ移動を始めないようにする。
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(label)
+    block_drag(
+        div()
+            .id(id)
+            .h(px(24.0))
+            .mx(px(2.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .rounded_sm()
+            .cursor_pointer()
+            .hover(|d| d.bg(rgb(HOVER)))
+            .child(label),
+    )
 }
 
 impl AppWindow {
