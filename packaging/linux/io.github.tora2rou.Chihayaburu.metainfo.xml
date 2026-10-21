@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.tora2rou.Chihayaburu</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>Chihayaburu</name>
+  <developer id="io.github.tora2rou">
+    <name>tora2rou</name>
+  </developer>
+  <summary>A fast, simple PDF viewer</summary>
+  <summary xml:lang="ja">軽くてシンプルなPDFビューア</summary>
+  <description>
+    <p>
+      Chihayaburu is a PDF viewer built with GPUI. It scrolls smoothly through all pages,
+      zooms, rotates, and shows page thumbnails and the table of contents.
+    </p>
+    <p xml:lang="ja">
+      ChihayaburuはGPUIで作ったPDFビューアです。全ページをなめらかにスクロールでき、
+      拡大縮小、回転、ページのサムネイルや目次の表示ができます。
+    </p>
+    <p>
+      Text can be selected and copied, and links, including plain-text URLs, can be clicked.
+    </p>
+    <p xml:lang="ja">
+      文字の選択とコピー、リンクのクリック(文字として書かれたURLを含む)にも対応しています。
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.tora2rou.Chihayaburu.desktop</launchable>
+  <provides>
+    <binary>chihayaburu</binary>
+  </provides>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <categories>
+    <category>Office</category>
+    <category>Viewer</category>
+  </categories>
+  <url type="homepage">https://github.com/tora2rou/zed_pdf-view</url>
+  <url type="bugtracker">https://github.com/tora2rou/zed_pdf-view/issues</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-21"/>
+  </releases>
+</component>

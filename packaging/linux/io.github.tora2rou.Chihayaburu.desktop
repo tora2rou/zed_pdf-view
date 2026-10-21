@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Chihayaburu
+GenericName=PDF Viewer
+GenericName[ja]=PDFビューア
+Comment=A fast, simple PDF viewer
+Comment[ja]=軽くてシンプルなPDFビューア
+Exec=chihayaburu %f
+Icon=chihayaburu
+Terminal=false
+Categories=Office;Viewer;
+MimeType=application/pdf;
+Keywords=PDF;viewer;document;reader;
+StartupNotify=true
+StartupWMClass=io.github.tora2rou.Chihayaburu
