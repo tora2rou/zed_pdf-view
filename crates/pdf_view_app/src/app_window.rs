@@ -4,8 +4,9 @@ use std::{
 };
 
 use gpui::{
-    AppContext as _, Context, Decorations, Entity, ExternalPaths, Focusable as _, IntoElement,
-    KeyBinding, PathPromptOptions, Render, SharedString, Window, actions, div, prelude::*, px, rgb,
+    AppContext as _, Context, Decorations, Entity, ExternalPaths, FocusHandle, Focusable as _,
+    IntoElement, KeyBinding, PathPromptOptions, Render, SharedString, Window, actions, div,
+    prelude::*, px, rgb,
 };
 use pdf_core::{PdfDocument, PdfError};
 use pdf_viewer::PdfView;
@@ -59,6 +60,8 @@ pub struct AppWindow {
     pub(crate) show_recent: bool,
     /// タイトルバーのドラッグ開始待ち。最初のマウス移動でウィンドウ移動に切り替える。
     pub(crate) should_move: bool,
+    /// PDFを開く前など、ビューがフォーカスを持たないときにキー操作(Ctrl+Oなど)を受けるためのもの。
+    focus_handle: FocusHandle,
 }
 
 /// ファイル名だけを取り出す。取れなければパス全体。
@@ -89,9 +92,11 @@ impl AppWindow {
             recent_file,
             show_recent: false,
             should_move: false,
+            focus_handle: cx.focus_handle(),
         };
-        if let Some((path, document)) = initial {
-            this.show_document(path, document, window, cx);
+        match initial {
+            Some((path, document)) => this.show_document(path, document, window, cx),
+            None => window.focus(&this.focus_handle, cx),
         }
         this
     }
@@ -249,6 +254,7 @@ impl Render for AppWindow {
 
         div()
             .key_context(KEY_CONTEXT)
+            .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::open_file))
             .on_action(cx.listener(Self::toggle_recent))
             .on_drop(cx.listener(Self::on_drop))
@@ -349,5 +355,56 @@ mod tests {
             }
         }
         panic!("no click in the empty state opened the recent file");
+    }
+
+    fn init_keybindings(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            pdf_viewer::init(cx);
+            init(cx);
+        });
+    }
+
+    /// PDFを開く前(何もフォーカスされていない状態)でも、Ctrl+Oでダイアログが出る。
+    #[gpui::test]
+    fn ctrl_o_opens_the_dialog_in_the_empty_state(cx: &mut TestAppContext) {
+        init_keybindings(cx);
+        let (_view, cx) = cx.add_window_view(|window, cx| AppWindow::new(None, None, window, cx));
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("ctrl-o");
+        assert!(cx.did_prompt_for_paths(), "Ctrl+O did not open the dialog");
+    }
+
+    /// PDFを開いた後(ビューにフォーカスがある状態)でも、Ctrl+Oでダイアログが出る。
+    #[gpui::test]
+    fn ctrl_o_opens_the_dialog_while_viewing(cx: &mut TestAppContext) {
+        init_keybindings(cx);
+        let document = Arc::new(PdfDocument::open(FIXTURE).unwrap());
+        let (_view, cx) = cx.add_window_view(|window, cx| {
+            AppWindow::new(Some((PathBuf::from(FIXTURE), document)), None, window, cx)
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("ctrl-o");
+        assert!(cx.did_prompt_for_paths(), "Ctrl+O did not open the dialog");
+    }
+
+    /// Ctrl+Shift+Oで最近のファイルの一覧が開閉する(空の状態でも、閲覧中でも)。
+    #[gpui::test]
+    fn ctrl_shift_o_toggles_the_recent_list(cx: &mut TestAppContext) {
+        init_keybindings(cx);
+        let (view, cx) = cx.add_window_view(|window, cx| AppWindow::new(None, None, window, cx));
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("ctrl-shift-o");
+        assert!(
+            view.read_with(cx, |this, _| this.show_recent),
+            "did not open"
+        );
+        cx.simulate_keystrokes("ctrl-shift-o");
+        assert!(
+            view.read_with(cx, |this, _| !this.show_recent),
+            "did not close"
+        );
     }
 }

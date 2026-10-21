@@ -168,3 +168,10 @@ Zed向けGPUI製PDFビューアの開発過程を記録する。
 - 原因: この環境 (WSL2) には xdg-desktop-portal が無い。gpuiのLinux実装は、ファイル選択にポータル (ashpd) を使い、無いと `Couldn't open file picker due to missing xdg-desktop-portal implementation.` のエラーを返す。アプリはそのエラーを無視していたので、何も起きないように見えた。`zenity` / `kdialog` も無い。
 - 対応 (第一段階): エラーを画面上部の赤い帯に出す (「ドロップするか Recent を使う」案内つき)。
 - 未解決: ダイアログ自体を出す方法。選択肢は (A) 環境にポータルを入れる (`xdg-desktop-portal` + `xdg-desktop-portal-gtk` など。sudoが必要) / (B) アプリ内蔵のファイルブラウザを作る / (C) パスを直接入力する簡易入力。ユーザーの判断待ち。
+
+### Ctrl+Oが効かない (ユーザー報告: ポータルを入れると`Open`ボタンは動くが`Ctrl+O`は動かない)
+- 再現: テスト (`simulate_keystrokes("ctrl-o")` + `did_prompt_for_paths`) で、PDFを開く前 (空の状態) だけ失敗した。PDFを開いた後は動いていた。
+- 原因: GPUIのキーバインドは「フォーカスのある要素から根に向かう要素のコンテキスト」で解決される。空の状態ではフォーカスを持つ要素が無く、`AppWindow` の `key_context("PdfViewApp")` が経路に入らないため、アクションがどこにも届かなかった。ボタンは`on_click`で直接メソッドを呼ぶので影響を受けなかった。
+- 修正: `AppWindow` 自身が `FocusHandle` を持ち、`track_focus` する。起動時にPDFが無ければここにフォーカスを置く。PDFを開いたらビューにフォーカスを移す (従来どおり)。
+- テスト: 空の状態 / 閲覧中の `Ctrl+O`、`Ctrl+Shift+O` の開閉 (計3件) を追加。
+- 教訓: キーボードショートカットを持つビューは、ボタンだけで確認せず、フォーカスが無い状態でもテストする。
