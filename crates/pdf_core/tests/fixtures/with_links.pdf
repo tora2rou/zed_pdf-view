@@ -1,0 +1,80 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 6 0 R 9 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Annots [11 0 R 12 0 R 13 0 R 14 0 R 15 0 R] >>
+endobj
+4 0 obj
+<< /Length 142 >>
+stream
+1 0 0 rg 10 10 50 20 re f  0 1 0 rg 100 50 80 30 re f  0 0 1 rg 100 10 40 20 re f  1 1 0 rg 70 40 20 20 re f  0.5 0.5 0.5 rg 150 85 40 10 re f
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Rotate 90 /Contents 7 0 R /Annots [16 0 R] >>
+endobj
+7 0 obj
+<< /Length 25 >>
+stream
+1 0 1 rg 20 40 60 30 re f
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /CropBox [20 10 180 90] /Contents 10 0 R /Annots [17 0 R] >>
+endobj
+10 0 obj
+<< /Length 25 >>
+stream
+0 1 1 rg 30 20 40 20 re f
+endstream
+endobj
+11 0 obj
+<< /Type /Annot /Subtype /Link /Rect [10 10 60 30] /Dest [6 0 R /Fit] >>
+endobj
+12 0 obj
+<< /Type /Annot /Subtype /Link /Rect [100 50 180 80] /A << /S /URI /URI (https://example.com/a) >> >>
+endobj
+13 0 obj
+<< /Type /Annot /Subtype /Link /Rect [100 10 140 30] /A << /S /URI /URI (javascript:alert(1)) >> >>
+endobj
+14 0 obj
+<< /Type /Annot /Subtype /Link /Rect [70 40 90 60] /A << /S /GoTo /D [9 0 R /Fit] >> >>
+endobj
+15 0 obj
+<< /Type /Annot /Subtype /Link /Rect [190 95 150 85] /A << /S /URI /URI (mailto:me@example.com) >> >>
+endobj
+16 0 obj
+<< /Type /Annot /Subtype /Link /Rect [20 40 80 70] /A << /S /GoTo /D [3 0 R /Fit] >> >>
+endobj
+17 0 obj
+<< /Type /Annot /Subtype /Link /Rect [30 20 70 40] /A << /S /URI /URI (http://example.org/crop) >> >>
+endobj
+xref
+0 18
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000259 00000 n 
+0000000000 65535 f 
+0000000452 00000 n 
+0000000567 00000 n 
+0000000000 65535 f 
+0000000642 00000 n 
+0000000771 00000 n 
+0000000847 00000 n 
+0000000936 00000 n 
+0000001054 00000 n 
+0000001170 00000 n 
+0000001274 00000 n 
+0000001392 00000 n 
+0000001496 00000 n 
+trailer
+<< /Size 18 /Root 1 0 R >>
+startxref
+1614
+%%EOF
