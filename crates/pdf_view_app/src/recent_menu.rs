@@ -21,7 +21,14 @@ fn parent_display(path: &Path) -> String {
 
 impl AppWindow {
     /// 最近のファイルの一覧。クリックで開く。履歴が空なら案内を出す。
-    pub(crate) fn render_recent_list(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    ///
+    /// `id_prefix`は項目の要素IDの接頭辞。GPUIは要素IDでクリック状態を共有するので、
+    /// 同時に表示される一覧(案内とオーバーレイ)では必ず別の値にする。
+    pub(crate) fn render_recent_list(
+        &self,
+        id_prefix: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let mut list = div().flex().flex_col().w_full();
         if self.recent.paths().is_empty() {
             return list
@@ -38,7 +45,7 @@ impl AppWindow {
             let target = path.clone();
             list = list.child(
                 div()
-                    .id(("recent", index))
+                    .id((id_prefix, index))
                     .px(px(12.0))
                     .py(px(6.0))
                     .cursor_pointer()
@@ -73,17 +80,19 @@ impl AppWindow {
         } else {
             TITLEBAR_HEIGHT + 4.0
         };
+        // バックドロップ(外側クリックで閉じる)とパネルは兄弟にする。パネルを子にして
+        // stop_propagationで背面を止めると、パネル内の項目のクリックまで成立しなくなる。
         Some(
             div()
                 .absolute()
                 .inset_0()
-                .on_mouse_down(
+                .child(div().absolute().inset_0().on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _, _, cx| {
                         this.show_recent = false;
                         cx.notify();
                     }),
-                )
+                ))
                 .child(
                     div()
                         .absolute()
@@ -96,9 +105,9 @@ impl AppWindow {
                         .border_1()
                         .border_color(rgb(BORDER))
                         .bg(rgb(PANEL_BACKGROUND))
-                        // パネル内のクリックで閉じないよう、背面へ伝えない。
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(self.render_recent_list(cx)),
+                        // パネル上では背面のバックドロップにマウスが届かないようにする。
+                        .occlude()
+                        .child(self.render_recent_list("recent-overlay", cx)),
                 ),
         )
     }

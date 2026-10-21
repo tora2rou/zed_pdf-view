@@ -13,3 +13,6 @@ gpui.workspace = true
 gpui_platform.workspace = true
 pdf_core.workspace = true
 pdf_viewer.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

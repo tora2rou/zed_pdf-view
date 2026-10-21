@@ -39,7 +39,7 @@ fn open_window(initial: Option<(PathBuf, Arc<PdfDocument>)>, cx: &mut App) {
         ..Default::default()
     };
     cx.open_window(options, |window, cx| {
-        cx.new(|cx| AppWindow::new(initial, window, cx))
+        cx.new(|cx| AppWindow::new(initial, recent::recent_files_path(), window, cx))
     })
     .expect("ウィンドウを開けませんでした");
     cx.activate(true);

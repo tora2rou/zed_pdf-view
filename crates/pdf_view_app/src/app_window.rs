@@ -10,10 +10,7 @@ use gpui::{
 use pdf_core::{PdfDocument, PdfError};
 use pdf_viewer::PdfView;
 
-use crate::{
-    recent::{RecentFiles, recent_files_path},
-    resize::resize_handles,
-};
+use crate::{recent::RecentFiles, resize::resize_handles};
 
 actions!(
     pdf_view_app,
@@ -56,6 +53,8 @@ pub struct AppWindow {
     /// 直近に開こうとして失敗した理由。開くのに成功したら消える。
     pub(crate) error: Option<SharedString>,
     pub(crate) recent: RecentFiles,
+    /// 履歴の保存先。`None`なら保存しない。
+    recent_file: Option<PathBuf>,
     /// 最近のファイルの一覧を重ねて表示しているか。
     pub(crate) show_recent: bool,
     /// タイトルバーのドラッグ開始待ち。最初のマウス移動でウィンドウ移動に切り替える。
@@ -71,20 +70,23 @@ fn file_name(path: &Path) -> String {
 }
 
 impl AppWindow {
-    /// `initial`があれば、それを開いた状態で始める。
+    /// `initial`があれば、それを開いた状態で始める。履歴は`recent_file`から読み、そこへ保存する。
     pub fn new(
         initial: Option<(PathBuf, Arc<PdfDocument>)>,
+        recent_file: Option<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let recent = recent_files_path()
-            .map(|file| RecentFiles::load(&file))
+        let recent = recent_file
+            .as_deref()
+            .map(RecentFiles::load)
             .unwrap_or_default();
         let mut this = Self {
             title: APP_TITLE.into(),
             viewer: None,
             error: None,
             recent,
+            recent_file,
             show_recent: false,
             should_move: false,
         };
@@ -118,8 +120,8 @@ impl AppWindow {
         self.error = None;
         self.show_recent = false;
         self.recent.add(path);
-        if let Some(file) = recent_files_path()
-            && let Err(e) = self.recent.save(&file)
+        if let Some(file) = &self.recent_file
+            && let Err(e) = self.recent.save(file)
         {
             eprintln!("最近のファイルを保存できません: {e}");
         }
@@ -210,7 +212,7 @@ impl AppWindow {
                             .text_xs()
                             .child("Recent files"),
                     )
-                    .child(self.render_recent_list(cx)),
+                    .child(self.render_recent_list("recent-inline", cx)),
             )
     }
 }
@@ -260,5 +262,75 @@ impl Render for AppWindow {
             .child(div().flex_1().min_h_0().w_full().child(content))
             .when(client_side && !maximized, |d| d.children(resize_handles()))
             .children(self.render_recent_overlay(window, cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Modifiers, TestAppContext, point};
+
+    const FIXTURE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../pdf_core/tests/fixtures/two_pages.pdf"
+    );
+
+    /// 履歴ファイルにFIXTUREだけを書いた一時ディレクトリ内のパスを返す。
+    fn recent_file_with_fixture(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("pdf_view_app_{name}_{}", std::process::id()));
+        let file = dir.join("recent.txt");
+        let mut recent = RecentFiles::default();
+        recent.add(PathBuf::from(FIXTURE));
+        recent.save(&file).unwrap();
+        file
+    }
+
+    #[gpui::test]
+    fn clicking_a_recent_entry_opens_it(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            AppWindow::new(None, Some(recent_file_with_fixture("click")), window, cx)
+        });
+        view.update_in(cx, |this, _, cx| {
+            this.show_recent = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |this, _| this.viewer.is_none()));
+
+        // 最初の項目(オーバーレイの先頭)をクリックする。
+        cx.simulate_click(point(px(100.0), px(50.0)), Modifiers::none());
+        cx.run_until_parked();
+
+        let (opened, shown, error) = view.read_with(cx, |this, _| {
+            (this.viewer.is_some(), this.show_recent, this.error.clone())
+        });
+        assert!(
+            opened,
+            "viewer is still None (show_recent={shown}, error={error:?})"
+        );
+        assert!(!shown, "the overlay should close after opening");
+    }
+
+    /// 案内内の一覧(オーバーレイを出していない状態)の項目も、クリックで開ける。
+    #[gpui::test]
+    fn clicking_a_recent_entry_in_the_empty_state_opens_it(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            AppWindow::new(None, Some(recent_file_with_fixture("inline")), window, cx)
+        });
+        cx.run_until_parked();
+
+        // 案内は縦横中央に並ぶので、画面中央付近の項目を狙う。
+        let size = cx.update(|window, _| window.viewport_size());
+        for y in (0..f32::from(size.height) as i32).step_by(8) {
+            cx.simulate_click(
+                point(size.width / 2.0 - px(150.0), px(y as f32)),
+                Modifiers::none(),
+            );
+            cx.run_until_parked();
+            if view.read_with(cx, |this, _| this.viewer.is_some()) {
+                return;
+            }
+        }
+        panic!("no click in the empty state opened the recent file");
     }
 }
