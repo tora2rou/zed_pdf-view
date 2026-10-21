@@ -43,8 +43,8 @@ const TEXT: u32 = 0xdddddd;
 const MUTED_TEXT: u32 = 0x999999;
 const ERROR_BACKGROUND: u32 = 0x5a1e1e;
 
-/// ウィンドウのタイトル(ファイル未選択のとき)。
-const APP_TITLE: &str = "PDF Viewer";
+/// アプリの表示名。ウィンドウのタイトルなどに使う。
+pub const APP_NAME: &str = "Chihayaburu";
 
 /// アプリのウィンドウ全体。自前のタイトルバーとリサイズ領域でPdfViewを包む。
 /// PDFを開く前(引数なしで起動したとき)は、案内を表示する。
@@ -85,7 +85,7 @@ impl AppWindow {
             .map(RecentFiles::load)
             .unwrap_or_default();
         let mut this = Self {
-            title: APP_TITLE.into(),
+            title: APP_NAME.into(),
             viewer: None,
             error: None,
             recent,
@@ -121,7 +121,7 @@ impl AppWindow {
             window.focus(&viewer.focus_handle(cx), cx);
         }
         self.title = file_name(&path).into();
-        window.set_window_title(&self.title);
+        window.set_window_title(&format!("{} - {APP_NAME}", self.title));
         self.error = None;
         self.show_recent = false;
         self.recent.add(path);
@@ -130,6 +130,12 @@ impl AppWindow {
         {
             eprintln!("最近のファイルを保存できません: {e}");
         }
+        cx.notify();
+    }
+
+    /// ウィンドウ上部の帯に、エラーを出す(起動時に渡されたファイルが開けなかったときなど)。
+    pub(crate) fn show_error(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.error = Some(message.into());
         cx.notify();
     }
 

@@ -1,3 +1,6 @@
+// Windowsのreleaseビルドでは、起動時にコンソール(黒い画面)を出さない。
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app_window;
 mod logger;
 mod recent;
@@ -11,7 +14,7 @@ use gpui::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
 use gpui_platform::application;
 use pdf_core::PdfDocument;
 
-use app_window::AppWindow;
+use app_window::{APP_NAME, AppWindow};
 
 const USAGE: &str = "使い方: pdf_view_app [file.pdf]";
 
@@ -27,20 +30,33 @@ fn pdf_path_from_args(mut args: impl Iterator<Item = String>) -> Result<Option<P
     Ok(Some(PathBuf::from(path)))
 }
 
-fn open_window(initial: Option<(PathBuf, Arc<PdfDocument>)>, cx: &mut App) {
+/// 起動時に開くもの。開けなかったときは、そのエラーをウィンドウに出す。
+struct Startup {
+    document: Option<(PathBuf, Arc<PdfDocument>)>,
+    error: Option<String>,
+}
+
+fn open_window(startup: Startup, cx: &mut App) {
     let bounds = Bounds::centered(None, size(px(900.), px(1000.)), cx);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(gpui::TitlebarOptions {
-            title: Some("PDF Viewer".into()),
+            title: Some(APP_NAME.into()),
             ..Default::default()
         }),
         // 枠(タイトルバー)は自前で描画する。
         window_decorations: Some(gpui::WindowDecorations::Client),
         ..Default::default()
     };
+    let Startup { document, error } = startup;
     cx.open_window(options, |window, cx| {
-        cx.new(|cx| AppWindow::new(initial, recent::recent_files_path(), window, cx))
+        cx.new(|cx| {
+            let mut app = AppWindow::new(document, recent::recent_files_path(), window, cx);
+            if let Some(error) = error {
+                app.show_error(error, cx);
+            }
+            app
+        })
     })
     .expect("ウィンドウを開けませんでした");
     cx.activate(true);
@@ -55,21 +71,32 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // 起動時に指定されたファイルが開けないときは、ウィンドウを出さずにエラー終了する。
-    let initial = match path {
+    // 起動時に指定されたファイルが開けないときも、ウィンドウは開いてエラーを表示する
+    // (エクスプローラーから開いたときなど、端末が無くてもエラーが分かるように)。
+    let startup = match path {
         Some(path) => match PdfDocument::open(&path) {
-            Ok(document) => Some((path, Arc::new(document))),
+            Ok(document) => Startup {
+                document: Some((path, Arc::new(document))),
+                error: None,
+            },
             Err(e) => {
-                eprintln!("{}: {e}", path.display());
-                return ExitCode::FAILURE;
+                let message = format!("{}: {e}", path.display());
+                eprintln!("{message}");
+                Startup {
+                    document: None,
+                    error: Some(message),
+                }
             }
         },
-        None => None,
+        None => Startup {
+            document: None,
+            error: None,
+        },
     };
     application().run(move |cx: &mut App| {
         pdf_viewer::init(cx);
         app_window::init(cx);
-        open_window(initial, cx);
+        open_window(startup, cx);
     });
     ExitCode::SUCCESS
 }
