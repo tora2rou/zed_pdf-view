@@ -2,7 +2,7 @@ use std::{
     fs,
     num::NonZeroUsize,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use hayro::{
@@ -13,7 +13,7 @@ use hayro::{
 };
 use lru::LruCache;
 
-use crate::{PdfError, RenderedPage};
+use crate::{OutlineItem, PdfError, RenderedPage, outline::read_outline};
 
 /// キャッシュするページ画像の既定の最大枚数。
 const DEFAULT_CACHE_CAPACITY: usize = 16;
@@ -24,6 +24,8 @@ type CacheKey = (usize, u32);
 pub struct PdfDocument {
     pdf: Pdf,
     cache: Mutex<LruCache<CacheKey, Arc<RenderedPage>>>,
+    /// 目次。初めて必要になったときに読む。
+    outline: OnceLock<Vec<OutlineItem>>,
 }
 
 impl PdfDocument {
@@ -34,11 +36,17 @@ impl PdfDocument {
         Ok(Self {
             pdf,
             cache: Mutex::new(LruCache::new(capacity)),
+            outline: OnceLock::new(),
         })
     }
 
     pub fn page_count(&self) -> usize {
         self.pdf.pages().len()
+    }
+
+    /// 文書の目次。無ければ空。初回だけ読み込む。
+    pub fn outline(&self) -> &[OutlineItem] {
+        self.outline.get_or_init(|| read_outline(&self.pdf))
     }
 
     /// ページのサイズ(幅, 高さ)をPDFポイント単位(1/72インチ)で返す。回転・CropBox反映済み。
