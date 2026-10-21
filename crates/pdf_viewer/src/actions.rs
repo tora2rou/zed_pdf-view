@@ -10,6 +10,10 @@ actions!(
         PreviousPage,
         FirstPage,
         LastPage,
+        RotateClockwise,
+        RotateCounterclockwise,
+        ToggleDarkMode,
+        ToggleFullscreen,
     ]
 );
 
@@ -33,5 +37,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("left", PreviousPage, ctx),
         KeyBinding::new("home", FirstPage, ctx),
         KeyBinding::new("end", LastPage, ctx),
+        KeyBinding::new("r", RotateClockwise, ctx),
+        KeyBinding::new("shift-r", RotateCounterclockwise, ctx),
+        KeyBinding::new("d", ToggleDarkMode, ctx),
+        KeyBinding::new("f11", ToggleFullscreen, ctx),
     ]);
 }

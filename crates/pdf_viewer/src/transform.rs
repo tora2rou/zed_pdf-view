@@ -46,10 +46,17 @@ impl Rotation {
     }
 }
 
+/// ページの見た目の設定(回転と白黒反転)。これが変わると画像を作り直す。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Appearance {
+    pub rotation: Rotation,
+    pub invert: bool,
+}
+
 /// 回転・反転した新しい画像を作る。何も変えないときもコピーを返す。
-pub fn transform(page: &RenderedPage, rotation: Rotation, invert: bool) -> RenderedPage {
-    let mut out = rotate(page, rotation);
-    if invert {
+pub fn transform(page: &RenderedPage, appearance: Appearance) -> RenderedPage {
+    let mut out = rotate(page, appearance.rotation);
+    if appearance.invert {
         invert_colors(&mut out.rgba);
     }
     out
@@ -109,6 +116,13 @@ mod tests {
         }
     }
 
+    fn rot(rotation: Rotation) -> Appearance {
+        Appearance {
+            rotation,
+            invert: false,
+        }
+    }
+
     const RED: [u8; 4] = [255, 0, 0, 255];
     const BLUE: [u8; 4] = [0, 0, 255, 255];
 
@@ -141,21 +155,21 @@ mod tests {
     #[test]
     fn rotate_90_puts_left_pixel_on_top() {
         // 時計回り90度: 横並び(赤,青)が縦並び(上:赤, 下:青)になる
-        let out = transform(&sample(), Rotation::Deg90, false);
+        let out = transform(&sample(), rot(Rotation::Deg90));
         assert_eq!((out.width, out.height), (1, 2));
         assert_eq!(out.rgba, [RED, BLUE].concat());
     }
 
     #[test]
     fn rotate_180_reverses_order() {
-        let out = transform(&sample(), Rotation::Deg180, false);
+        let out = transform(&sample(), rot(Rotation::Deg180));
         assert_eq!((out.width, out.height), (2, 1));
         assert_eq!(out.rgba, [BLUE, RED].concat());
     }
 
     #[test]
     fn rotate_270_puts_left_pixel_on_bottom() {
-        let out = transform(&sample(), Rotation::Deg270, false);
+        let out = transform(&sample(), rot(Rotation::Deg270));
         assert_eq!((out.width, out.height), (1, 2));
         assert_eq!(out.rgba, [BLUE, RED].concat());
     }
@@ -164,7 +178,7 @@ mod tests {
     fn four_quarter_turns_restore_the_image() {
         let mut page = sample();
         for _ in 0..4 {
-            page = transform(&page, Rotation::Deg90, false);
+            page = transform(&page, rot(Rotation::Deg90));
         }
         assert_eq!(page, sample());
     }
@@ -176,12 +190,18 @@ mod tests {
             height: 1,
             rgba: vec![10, 20, 30, 200],
         };
-        let out = transform(&page, Rotation::Deg0, true);
+        let out = transform(
+            &page,
+            Appearance {
+                invert: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(out.rgba, [245, 235, 225, 200]);
     }
 
     #[test]
     fn identity_transform_copies() {
-        assert_eq!(transform(&sample(), Rotation::Deg0, false), sample());
+        assert_eq!(transform(&sample(), Appearance::default()), sample());
     }
 }

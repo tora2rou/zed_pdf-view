@@ -8,12 +8,14 @@ use pdf_core::PdfDocument;
 
 use crate::{
     actions::{
-        FirstPage, KEY_CONTEXT, LastPage, NextPage, PreviousPage, ResetZoom, ZoomIn, ZoomOut,
+        FirstPage, KEY_CONTEXT, LastPage, NextPage, PreviousPage, ResetZoom, RotateClockwise,
+        RotateCounterclockwise, ToggleDarkMode, ToggleFullscreen, ZoomIn, ZoomOut,
     },
     images::PageImages,
     layout::{self, Layout},
     page_input::PageInput,
     toolbar::TOOLBAR_HEIGHT,
+    transform::Appearance,
     zoom::{self, ZoomMode},
 };
 
@@ -28,8 +30,12 @@ const CURRENT_PAGE_PROBE: f32 = 0.3;
 /// 依存し、ファイルの読み込みは呼び出し側が行う。
 pub struct PdfView {
     pub(crate) document: Arc<PdfDocument>,
-    /// 各ページのPDFポイント単位のサイズ。
+    /// 各ページのPDFポイント単位のサイズ(回転前)。
+    base_sizes: Vec<(f32, f32)>,
+    /// 各ページの表示上のサイズ(回転後)。レイアウトや倍率の計算にはこちらを使う。
     pub(crate) page_sizes: Vec<(f32, f32)>,
+    /// 回転と白黒反転。
+    pub(crate) appearance: Appearance,
     pub(crate) zoom: f32,
     pub(crate) zoom_mode: ZoomMode,
     scroll_handle: ScrollHandle,
@@ -44,12 +50,14 @@ pub struct PdfView {
 
 impl PdfView {
     pub fn new(document: Arc<PdfDocument>, cx: &mut Context<Self>) -> Self {
-        let page_sizes = (0..document.page_count())
+        let base_sizes: Vec<_> = (0..document.page_count())
             .map(|i| document.page_size(i).unwrap_or((0.0, 0.0)))
             .collect();
         Self {
             document,
-            page_sizes,
+            page_sizes: base_sizes.clone(),
+            base_sizes,
+            appearance: Appearance::default(),
             zoom: zoom::DEFAULT_ZOOM,
             zoom_mode: ZoomMode::Manual,
             scroll_handle: ScrollHandle::new(),
@@ -190,6 +198,61 @@ impl PdfView {
         self.scroll_to_page(self.page_sizes.len().saturating_sub(1), window, cx);
     }
 
+    /// 回転を変える。表示サイズが変わるので、いま見ているページの先頭に合わせ直す。
+    fn set_rotation(
+        &mut self,
+        rotation: crate::transform::Rotation,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (w, h) = self.viewport_size(window);
+        let current = self.current_page(&self.layout(w), h);
+        self.appearance.rotation = rotation;
+        self.page_sizes = self
+            .base_sizes
+            .iter()
+            .map(|&size| rotation.apply_to_size(size))
+            .collect();
+        self.scroll_to_page(current, window, cx);
+    }
+
+    pub(crate) fn rotate_clockwise(
+        &mut self,
+        _: &RotateClockwise,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_rotation(self.appearance.rotation.clockwise(), window, cx);
+    }
+
+    pub(crate) fn rotate_counterclockwise(
+        &mut self,
+        _: &RotateCounterclockwise,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_rotation(self.appearance.rotation.counterclockwise(), window, cx);
+    }
+
+    pub(crate) fn toggle_dark_mode(
+        &mut self,
+        _: &ToggleDarkMode,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.appearance.invert = !self.appearance.invert;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_fullscreen(
+        &mut self,
+        _: &ToggleFullscreen,
+        window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        window.toggle_fullscreen();
+    }
+
     /// ズーム方式を切り替える。`Manual`以外は次の描画で倍率が計算される。
     pub(crate) fn set_zoom_mode(&mut self, mode: ZoomMode, cx: &mut Context<Self>) {
         self.zoom_mode = mode;
@@ -327,10 +390,13 @@ impl Render for PdfView {
                 .top(px(rect.top))
                 .w(px(rect.width))
                 .h(px(rect.height));
-            let page = match self
-                .images
-                .get_or_render(&self.document, index, scale, window)
-            {
+            let page = match self.images.get_or_render(
+                &self.document,
+                index,
+                scale,
+                self.appearance,
+                window,
+            ) {
                 Ok(image) => page.child(img(image).size_full()),
                 Err(e) => page
                     .bg(rgb(0xffffff))
@@ -355,6 +421,10 @@ impl Render for PdfView {
             .on_action(cx.listener(Self::previous_page))
             .on_action(cx.listener(Self::first_page))
             .on_action(cx.listener(Self::last_page))
+            .on_action(cx.listener(Self::rotate_clockwise))
+            .on_action(cx.listener(Self::rotate_counterclockwise))
+            .on_action(cx.listener(Self::toggle_dark_mode))
+            .on_action(cx.listener(Self::toggle_fullscreen))
             .flex()
             .flex_col()
             .size_full()

@@ -3,11 +3,21 @@ use std::{collections::HashMap, ops::Range, sync::Arc};
 use gpui::{RenderImage, Window};
 use pdf_core::{PdfDocument, PdfError};
 
-use crate::to_render_image;
+use crate::{
+    to_render_image,
+    transform::{Appearance, transform},
+};
 
-/// ページ画像1枚。描画倍率が変わったら作り直す。
-struct PageImage {
+/// 画像を作り直す必要があるかを決める条件(描画倍率と見た目の設定)。
+#[derive(PartialEq, Eq)]
+struct ImageKey {
     scale_bits: u32,
+    appearance: Appearance,
+}
+
+/// ページ画像1枚。`key`が変わったら作り直す。
+struct PageImage {
+    key: ImageKey,
     image: Arc<RenderImage>,
 }
 
@@ -24,21 +34,21 @@ impl PageImages {
         document: &PdfDocument,
         index: usize,
         scale: f32,
+        appearance: Appearance,
         window: &mut Window,
     ) -> Result<Arc<RenderImage>, PdfError> {
-        let scale_bits = scale.to_bits();
-        if let Some(cached) = self
-            .images
-            .get(&index)
-            .filter(|c| c.scale_bits == scale_bits)
-        {
+        let key = ImageKey {
+            scale_bits: scale.to_bits(),
+            appearance,
+        };
+        if let Some(cached) = self.images.get(&index).filter(|c| c.key == key) {
             return Ok(cached.image.clone());
         }
         let rendered = document.render_page(index, scale)?;
-        let image = to_render_image(&rendered)
+        let image = to_render_image(&transform(&rendered, appearance))
             .ok_or_else(|| PdfError::Load("画像データのサイズが不正です".into()))?;
         let new = PageImage {
-            scale_bits,
+            key,
             image: image.clone(),
         };
         if let Some(old) = self.images.insert(index, new) {

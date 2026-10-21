@@ -3,7 +3,9 @@
 use gpui::{ClickEvent, Context, MouseButton, SharedString, Stateful, div, prelude::*, px, rgb};
 
 use crate::{
-    actions::{NextPage, PreviousPage, ZoomIn, ZoomOut},
+    actions::{
+        NextPage, PreviousPage, RotateClockwise, ToggleDarkMode, ToggleFullscreen, ZoomIn, ZoomOut,
+    },
     view::PdfView,
     zoom::ZoomMode,
 };
@@ -74,6 +76,7 @@ impl PdfView {
 
         let zoom_label = format!("{:.0}%", self.zoom * 100.0);
         let mode = self.zoom_mode;
+        let dark = self.appearance.invert;
 
         div()
             .flex()
@@ -113,5 +116,21 @@ impl PdfView {
                     |this, _: &ClickEvent, _, cx| this.set_zoom_mode(ZoomMode::FitPage, cx),
                 )),
             )
+            .child(div().w(px(16.0)))
+            .child(button("rotate", "Rotate", false).on_click(cx.listener(
+                |this, _: &ClickEvent, window, cx| {
+                    this.rotate_clockwise(&RotateClockwise, window, cx)
+                },
+            )))
+            .child(button("dark", "Dark", dark).on_click(cx.listener(
+                |this, _: &ClickEvent, window, cx| {
+                    this.toggle_dark_mode(&ToggleDarkMode, window, cx)
+                },
+            )))
+            .child(button("fullscreen", "Full", false).on_click(cx.listener(
+                |this, _: &ClickEvent, window, cx| {
+                    this.toggle_fullscreen(&ToggleFullscreen, window, cx)
+                },
+            )))
     }
 }
