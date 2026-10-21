@@ -1,0 +1,58 @@
+# Maintainer: tora2rou <tora2rou@users.noreply.github.com>
+#
+# ソースからビルドするPKGBUILD(Arch / Manjaro / EndeavourOS など)。
+#
+#   cd packaging/arch
+#   makepkg -si
+#
+# ブランチを指定するには: _branch=linux-packaging makepkg -si
+# (main に取り込まれたあとは、指定しなくてよい)
+
+_pkgname=chihayaburu
+pkgname=$_pkgname-git
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc='Fast, simple PDF viewer built with GPUI'
+arch=('x86_64' 'aarch64')
+url='https://github.com/tora2rou/zed_pdf-view'
+license=('Apache-2.0')
+# libxkbcommon-x11 / libxcb はリンクされる。wayland と vulkan-icd-loader は実行時に読み込まれる。
+depends=('gcc-libs' 'glibc' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'vulkan-icd-loader' 'fontconfig')
+# rustは1.98以上が必要(rust-toolchain.toml が 1.98.1 を指定している)。rustupで入れている場合は、
+# rustup が rust-toolchain.toml に従って自動で入れる。
+makedepends=('git' 'rust>=1:1.98' 'clang' 'cmake' 'pkgconf')
+optdepends=(
+  'xdg-desktop-portal: ファイルを開くダイアログ(Ctrl+O)'
+  'xdg-desktop-portal-gtk: ファイルを開くダイアログ(GNOME以外)'
+  'xdg-utils: リンクをブラウザで開く'
+  'vulkan-driver: 描画(GPUのドライバ。vulkan-radeon, vulkan-intel, nvidia-utils, vulkan-swrast など)'
+)
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+source=("$pkgname::git+$url.git#branch=${_branch:-main}")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$pkgname"
+  local version
+  version=$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -n1)
+  printf '%s.r%s.g%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd "$pkgname"
+  # 依存crateは、ネットワークが使える prepare で取得する(build は --frozen でオフラインにする)。
+  cargo fetch --locked --target "$(rustc --print host-tuple)"
+}
+
+build() {
+  cd "$pkgname"
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p pdf_view_app
+}
+
+package() {
+  cd "$pkgname"
+  make -C packaging/linux install \
+    DESTDIR="$pkgdir" PREFIX=/usr BINARY=../../target/release/pdf_view_app
+}
