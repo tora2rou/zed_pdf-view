@@ -151,3 +151,20 @@ Zed向けGPUI製PDFビューアの開発過程を記録する。
 - キーバインドはアプリ側 (`app_window::init`) で `PdfViewApp` コンテキストに登録。`PdfView` の編集中は `PdfViewer` コンテキストを外しているが、`PdfViewApp` は残るので `Ctrl+O` はページ番号入力中も効く。
 - リファクタ: タイトルバーのボタンで重複していた「ドラッグ開始を防ぐ」処理を `block_drag` にまとめた。
 - テスト: `recent.rs` 7件、引数処理3件。ダイアログやドロップは目視確認待ち。起動 (引数なし / ファイルあり / 存在しないファイル / 引数2つ) は確認済み。
+
+## 段階2の不具合修正 (ユーザー報告: ダイアログが出ない / Recentから開けない)
+### Recentの項目が開けない
+- 原因: 空の状態では、案内内の一覧とオーバーレイの一覧に、同じ要素ID (`("recent", index)`) の項目が二重に存在した。GPUIは要素IDで「押下中」の状態を共有する。背面側の項目 (ホバーされていない) が mouse up の capture フェーズで押下状態を先に消費してしまい、前面の項目の `on_click` が呼ばれなかった。
+- 切り分けの手順 (GPUIの `test-support` を dev-dependency に追加して、`TestAppContext` の `simulate_click` で再現した):
+  1. バックドロップのクリックで閉じることを確認 (テストの仕掛けは正しい)。
+  2. 項目の `mouse_down` / `mouse_up` は届くが `on_click` だけ呼ばれないことを確認。
+  3. 単純な要素の `on_click` はテスト内で動くことを確認 (GPUIの問題ではない)。
+  4. `occlude` / `hover` / `overflow_hidden` / `on_drop` / `key_context` を一つずつ外しても直らない → 要素IDの重複に気づいた。
+- 修正: 一覧の描画に `id_prefix` を渡し、案内用 (`recent-inline`) とオーバーレイ用 (`recent-overlay`) で別のIDにした。回帰テストを2件追加 (オーバーレイの項目 / 案内内の項目)。
+- 教訓: 同時に表示されうる同じ見た目の部品には、必ず別のIDを付ける。
+- 途中でパネルを兄弟構造 + `occlude` に直したが、これは原因ではなかった。ただしパネルの `stop_propagation` で背面を止める方式より素直なので、そのまま残した。
+
+### ファイル選択ダイアログが出ない
+- 原因: この環境 (WSL2) には xdg-desktop-portal が無い。gpuiのLinux実装は、ファイル選択にポータル (ashpd) を使い、無いと `Couldn't open file picker due to missing xdg-desktop-portal implementation.` のエラーを返す。アプリはそのエラーを無視していたので、何も起きないように見えた。`zenity` / `kdialog` も無い。
+- 対応 (第一段階): エラーを画面上部の赤い帯に出す (「ドロップするか Recent を使う」案内つき)。
+- 未解決: ダイアログ自体を出す方法。選択肢は (A) 環境にポータルを入れる (`xdg-desktop-portal` + `xdg-desktop-portal-gtk` など。sudoが必要) / (B) アプリ内蔵のファイルブラウザを作る / (C) パスを直接入力する簡易入力。ユーザーの判断待ち。

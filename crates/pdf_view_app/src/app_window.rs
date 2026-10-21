@@ -156,12 +156,29 @@ impl AppWindow {
             prompt: Some("Open PDF".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
-            // キャンセルされた場合と、ダイアログを出せなかった場合は何もしない。
-            if let Ok(Ok(Some(paths))) = selected.await
-                && let Some(path) = paths.into_iter().next()
-            {
-                this.update_in(cx, |this, window, cx| this.open_path(path, window, cx))
+            match selected.await {
+                Ok(Ok(Some(paths))) => {
+                    if let Some(path) = paths.into_iter().next() {
+                        this.update_in(cx, |this, window, cx| this.open_path(path, window, cx))
+                            .ok();
+                    }
+                }
+                // キャンセルされた。
+                Ok(Ok(None)) | Err(_) => {}
+                // ダイアログを出せなかった(Linuxでxdg-desktop-portalが無い場合など)。
+                Ok(Err(e)) => {
+                    this.update(cx, |this, cx| {
+                        this.error = Some(
+                            format!(
+                                "Could not open the file dialog: {e}\n\
+                                 Drop a PDF onto the window, or use Recent instead."
+                            )
+                            .into(),
+                        );
+                        cx.notify();
+                    })
                     .ok();
+                }
             }
         })
         .detach();
