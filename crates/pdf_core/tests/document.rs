@@ -84,3 +84,29 @@ fn render_page_out_of_range() {
         Err(PdfError::PageOutOfRange { .. })
     ));
 }
+
+#[test]
+fn render_page_is_cached_per_page_and_scale() {
+    use std::sync::Arc;
+    let doc = PdfDocument::open(FIXTURE).unwrap();
+    let a = doc.render_page(0, 1.0).unwrap();
+    assert!(Arc::ptr_eq(&a, &doc.render_page(0, 1.0).unwrap()));
+    assert!(!Arc::ptr_eq(&a, &doc.render_page(0, 2.0).unwrap()));
+    assert!(!Arc::ptr_eq(&a, &doc.render_page(1, 1.0).unwrap()));
+}
+
+#[test]
+fn cache_evicts_least_recently_used() {
+    use std::{num::NonZeroUsize, sync::Arc};
+    let doc = PdfDocument::open(FIXTURE).unwrap();
+    doc.set_cache_capacity(NonZeroUsize::new(1).unwrap());
+    let a = doc.render_page(0, 1.0).unwrap();
+    doc.render_page(1, 1.0).unwrap();
+    assert!(!Arc::ptr_eq(&a, &doc.render_page(0, 1.0).unwrap()));
+}
+
+#[test]
+fn document_is_send_and_sync() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<PdfDocument>();
+}
