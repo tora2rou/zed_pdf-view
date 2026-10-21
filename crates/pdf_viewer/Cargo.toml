@@ -10,6 +10,7 @@ path = "src/lib.rs"
 [dependencies]
 gpui.workspace = true
 pdf_core.workspace = true
+log.workspace = true
 image.workspace = true
 
 [dev-dependencies]

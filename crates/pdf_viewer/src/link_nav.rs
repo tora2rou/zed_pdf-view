@@ -63,22 +63,33 @@ impl PdfView {
         };
         cx.notify();
         let up = (f32::from(event.position.x), f32::from(event.position.y));
-        if is_click(drag.mouse, up)
-            && let Some(target) = self.link_target_at(event.position, window)
-        {
+        let click = is_click(drag.mouse, up);
+        let target = self.link_target_at(event.position, window);
+        log::debug!("mouse up: click={click}, link={target:?}");
+        if click && let Some(target) = target {
             self.activate_link(target, window, cx);
         }
     }
 
     fn activate_link(&mut self, target: LinkTarget, window: &mut Window, cx: &mut Context<Self>) {
         match target {
-            LinkTarget::Page(index) => self.scroll_to_page(index, window, cx),
-            // PDFは信頼できない入力なので、安全なスキームだけをブラウザ等に渡す。
-            LinkTarget::Uri(uri) => {
-                if let Some(uri) = openable_uri(&uri) {
-                    cx.open_url(uri);
-                }
+            LinkTarget::Page(index) => {
+                log::debug!("following a link to page {}", index + 1);
+                self.scroll_to_page(index, window, cx)
             }
+            // PDFは信頼できない入力なので、安全なスキームだけをブラウザ等に渡す。
+            LinkTarget::Uri(uri) => match openable_uri(&uri) {
+                Some(uri) => {
+                    log::info!("opening link: {uri}");
+                    cx.open_url(uri);
+                    // 外部のブラウザが開くまで少しかかることがあるので、押したことを画面にも出す。
+                    self.show_notice(&format!("Opening {uri}"), window, cx);
+                }
+                None => {
+                    log::warn!("refused to open link: {uri}");
+                    self.show_notice(&format!("Blocked link: {uri}"), window, cx);
+                }
+            },
         }
     }
 }
@@ -153,13 +164,31 @@ mod tests {
         assert_eq!(cx.opened_url().as_deref(), Some("mailto:me@example.com"));
     }
 
-    /// `javascript:`のような危険なスキームは、リンク上をクリックしても開かない。
+    /// URLを開いたら、押したことが画面にも出て、しばらくすると消える。
+    #[gpui::test]
+    fn opening_a_link_shows_a_notice_that_fades(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx, 1.0);
+        let at = link_center(&view, cx, WEB);
+        cx.simulate_click(at, Modifiers::none());
+
+        let shown = view.read_with(cx, |this, _| this.notice.clone());
+        assert_eq!(shown.as_deref(), Some("Opening https://example.com/a"));
+
+        cx.executor()
+            .advance_clock(crate::notice::NOTICE_DURATION * 2);
+        cx.run_until_parked();
+        assert_eq!(view.read_with(cx, |this, _| this.notice.clone()), None);
+    }
+
+    /// `javascript:`のような危険なスキームは、リンク上をクリックしても開かない。画面には、ブロックしたことを出す。
     #[gpui::test]
     fn dangerous_links_are_not_opened(cx: &mut TestAppContext) {
         let (view, cx) = open_view(cx, 1.0);
         let at = link_center(&view, cx, JAVASCRIPT);
         cx.simulate_click(at, Modifiers::none());
         assert_eq!(cx.opened_url(), None);
+        let shown = view.read_with(cx, |this, _| this.notice.clone());
+        assert_eq!(shown.as_deref(), Some("Blocked link: javascript:alert(1)"));
     }
 
     /// ページ内リンクをクリックすると、そのページへスクロールする。

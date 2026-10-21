@@ -6,6 +6,7 @@ mod images;
 mod layout;
 mod link_hit;
 mod link_nav;
+mod notice;
 mod outline_rows;
 mod page_input;
 mod pan;

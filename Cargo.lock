@@ -3898,6 +3898,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "gpui_platform",
+ "log",
  "pdf_core",
  "pdf_viewer",
 ]
@@ -3908,6 +3909,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "image",
+ "log",
  "pdf_core",
 ]
 

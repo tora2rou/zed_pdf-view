@@ -1,4 +1,5 @@
 mod app_window;
+mod logger;
 mod recent;
 mod recent_menu;
 mod resize;
@@ -46,6 +47,7 @@ fn open_window(initial: Option<(PathBuf, Arc<PdfDocument>)>, cx: &mut App) {
 }
 
 fn main() -> ExitCode {
+    logger::init();
     let path = match pdf_path_from_args(std::env::args().skip(1)) {
         Ok(path) => path,
         Err(message) => {

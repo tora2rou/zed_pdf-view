@@ -3,7 +3,7 @@ use std::{collections::HashSet, ops::Range, sync::Arc, time::Instant};
 use gpui::{
     App, AppContext as _, Context, CursorStyle, Div, FocusHandle, Focusable, MouseButton,
     MouseDownEvent, MouseMoveEvent, Pixels, Point, ScrollDelta, ScrollEvent, ScrollHandle,
-    Stateful, Task, Window, div, img, point, prelude::*, px, rgb,
+    SharedString, Stateful, Task, Window, div, img, point, prelude::*, px, rgb,
 };
 use pdf_core::PdfDocument;
 
@@ -95,6 +95,9 @@ pub struct PdfView {
     pub(crate) drag: Option<DragState>,
     /// マウスがリンクの上にあるか(カーソルの形を変える)。
     pub(crate) hovering_link: bool,
+    /// 画面下部にしばらく出す短いお知らせ(リンクを開いたことなど)。
+    pub(crate) notice: Option<SharedString>,
+    pub(crate) notice_task: Option<Task<()>>,
     /// ページ番号入力欄の編集状態。`Some`の間は入力欄がフォーカスを持つ。
     pub(crate) page_input: Option<PageInput>,
     pub(crate) input_focus: FocusHandle,
@@ -133,6 +136,8 @@ impl PdfView {
             focus_handle: cx.focus_handle(),
             drag: None,
             hovering_link: false,
+            notice: None,
+            notice_task: None,
             page_input: None,
             input_focus: cx.focus_handle(),
         }
@@ -660,6 +665,7 @@ impl Render for PdfView {
             .on_action(cx.listener(Self::toggle_dark_mode))
             .on_action(cx.listener(Self::toggle_fullscreen))
             .on_action(cx.listener(Self::toggle_sidebar))
+            .relative()
             .flex()
             .flex_col()
             .size_full()
@@ -675,6 +681,7 @@ impl Render for PdfView {
                     .children(sidebar)
                     .child(pages_area),
             )
+            .children(self.render_notice())
     }
 }
 
