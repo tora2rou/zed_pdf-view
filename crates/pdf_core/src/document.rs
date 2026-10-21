@@ -15,8 +15,8 @@ use hayro::{
 use lru::LruCache;
 
 use crate::{
-    Link, OutlineItem, PdfError, RenderedPage, dest::page_index_by_id, links::read_links,
-    outline::read_outline,
+    Link, OutlineItem, PageText, PdfError, RenderedPage, dest::page_index_by_id, links::read_links,
+    outline::read_outline, text::extract_text,
 };
 
 /// キャッシュするページ画像の既定の最大枚数。
@@ -34,6 +34,8 @@ pub struct PdfDocument {
     page_ids: OnceLock<HashMap<ObjectIdentifier, usize>>,
     /// ページごとのリンク。そのページを初めて調べたときに読む。
     links: Vec<OnceLock<Vec<Link>>>,
+    /// ページごとの文字。そのページを初めて調べたときに取り出す。
+    texts: Vec<OnceLock<PageText>>,
 }
 
 impl PdfDocument {
@@ -48,6 +50,7 @@ impl PdfDocument {
             outline: OnceLock::new(),
             page_ids: OnceLock::new(),
             links: (0..page_count).map(|_| OnceLock::new()).collect(),
+            texts: (0..page_count).map(|_| OnceLock::new()).collect(),
         })
     }
 
@@ -114,6 +117,21 @@ impl PdfDocument {
             count: self.links.len(),
         })?;
         Ok(cell.get_or_init(|| read_links(&self.pdf, self.page_ids(), index)))
+    }
+
+    /// ページ`index`の文字と位置。初回だけ取り出す(ページの解釈が要るので、重いことがある)。
+    pub fn page_text(&self, index: usize) -> Result<&PageText, PdfError> {
+        let cell = self.texts.get(index).ok_or(PdfError::PageOutOfRange {
+            index,
+            count: self.texts.len(),
+        })?;
+        Ok(cell.get_or_init(|| {
+            self.pdf
+                .pages()
+                .get(index)
+                .map(extract_text)
+                .unwrap_or_default()
+        }))
     }
 
     fn page_ids(&self) -> &HashMap<ObjectIdentifier, usize> {

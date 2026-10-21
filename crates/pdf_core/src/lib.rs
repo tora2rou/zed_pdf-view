@@ -6,9 +6,11 @@ mod error;
 mod links;
 mod outline;
 mod render;
+mod text;
 
 pub use document::PdfDocument;
 pub use error::PdfError;
 pub use links::{Link, LinkRect, LinkTarget};
 pub use outline::OutlineItem;
 pub use render::RenderedPage;
+pub use text::{Gap, PageText, TextChar};
