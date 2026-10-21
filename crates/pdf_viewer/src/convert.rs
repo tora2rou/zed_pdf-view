@@ -8,7 +8,7 @@ use pdf_core::RenderedPage;
 /// ピクセル数とバッファ長が合わない場合は`None`。
 pub fn to_render_image(page: &RenderedPage) -> Option<Arc<RenderImage>> {
     let mut bgra = page.rgba.clone();
-    for px in bgra.chunks_exact_mut(4) {
+    for px in bgra.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
     let buffer = RgbaImage::from_raw(page.width, page.height, bgra)?;
