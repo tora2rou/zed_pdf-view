@@ -102,10 +102,10 @@ mod tests {
     const JAVASCRIPT: usize = 2;
     const MAIL: usize = 4;
 
-    fn open_view<'a>(
-        cx: &'a mut TestAppContext,
+    fn open_view(
+        cx: &mut TestAppContext,
         zoom: f32,
-    ) -> (gpui::Entity<PdfView>, &'a mut VisualTestContext) {
+    ) -> (gpui::Entity<PdfView>, &mut VisualTestContext) {
         let document = Arc::new(PdfDocument::open(WITH_LINKS).unwrap());
         let (view, cx) = cx.add_window_view(|_, cx| PdfView::new(document, cx));
         if zoom != 1.0 {
