@@ -368,3 +368,31 @@ Zed向けGPUI製PDFビューアの開発過程を記録する。
 ### 確認できていないこと (Windowsでの確認待ち)
 - 実際のビルドとリンク、exeのアイコン、起動、PDFを開く・ダブルクリックでの関連付け、インストール/アンインストールのスクリプトの実行。
 - フォント (日本語表示)、HiDPI、ファイル選択ダイアログ、URLを開く操作。
+
+## Linux (Debian・Nix・Arch) 向けのアプリ化 (`linux-packaging` ブランチ)
+ユーザーの希望: Debian・Nix・Archでも、アプリとして使えるように。アプリ名とアイコンが `windows-exe` ブランチにあるので、そこから切った (`windows-exe` が先に取り込まれる必要がある)。
+
+### 共通
+- **`.desktop`** (`Exec=chihayaburu %f`、`MimeType=application/pdf`) と **AppStream** (`metainfo.xml`)、**hicolor のアイコン** (16〜256px)、`make install` / `uninstall` (`DESTDIR`・`PREFIX` 対応)。実行ファイルのビルド時の名前は `pdf_view_app` だが、インストール時に `chihayaburu` にする。
+- `Exec` は `%F` (複数ファイル) でなく `%f` にした。このアプリは引数に1つのファイルしか受け付けず、複数だと使い方を出して終了するため。
+- **ID を逆ドメイン形式 (`io.github.tora2rou.Chihayaburu`) にした**。AppStream の検証が「IDが逆ドメインでない」と警告したのがきっかけ。デスクトップファイル名、AppStream のID、StartupWMClass、**ウィンドウの `app_id`** を、すべてこれに揃えた。Linux のデスクトップ環境は、ウィンドウの `app_id` (Wayland) / `WM_CLASS` (X11) と `.desktop` のファイル名を結びつけて、タスクバーのアイコンや名前を決めるので、揃っていないとアイコンが出ない。アイコン名とコマンド名は `chihayaburu` のまま。
+- **検証**: `desktop-file-validate` (通る)、`appstreamcli validate` (最初は、ローカライズ付きの説明が、`<description>` を分けていてエラー → 1つの `<description>` の中に `xml:lang` つきの `<p>` を並べて直した。開発者情報も追加して通った)。アイコンの生成ツールを、Linux用に生成し直して、Windows版の256pxと**ビット単位で同じ**になることを確かめた (同じ画像を再現できる)。
+- `make install` を、`install-bin` (実行ファイル) と `install-data` (それ以外) に分けた。Nix のように、実行ファイルを別の方法で入れる形式で、データだけを入れられる。
+
+### Debian / Ubuntu (`packaging/debian/build-deb.sh`)
+- リリースビルド → `make install` でステージング → `strip` → `copyright` と `changelog.Debian.gz` (Debianのポリシーで必須) → `control` → `dpkg-deb --root-owner-group --build`。
+- **依存関係**: リンクされているライブラリは `dpkg-shlibdeps` で自動検出 (仮の `debian/control` を置いて呼ぶ)。`ldd` に出ない、実行時に読み込まれるもの (`libwayland-client0`, `libvulkan1`) は手で足した。`Recommends` に、ファイルダイアログの `xdg-desktop-portal` とその実装、`xdg-utils`、`mesa-vulkan-drivers`。
+- **気づいたこと**: 自動検出された `libc6 (>= 2.39)` は、ビルドしたUbuntu 24.04のglibcに合わせた**正確な値**で、Debian 12 や Ubuntu 22.04 には入らない。バイナリが実際に2.39のシンボルを使っているため。ディストリビューションごとに、その上でビルドする、と手順書に書いた。
+- **検証**: ファイル一覧と所有者 (root/root)・権限、展開した実行ファイルが、`ldd` で不足なしで起動する、展開後の `.desktop`・AppStream が検証を通る。`lintian` は無いので、ポリシー検査は未実施。
+
+### Arch (`packaging/arch/PKGBUILD`)
+- `-git` パッケージ (`pkgver()` は、`Cargo.toml` のバージョン + コミット数 + コミットID)。`prepare()` で `cargo fetch --locked` (ネットワーク可)、`build()` は `--frozen` (オフライン)、`package()` は `make install`。`depends` は、リンクされるもの (`libxcb`, `libxkbcommon-x11`) と、実行時に読み込まれるもの (`wayland`, `vulkan-icd-loader`)。`optdepends` に、ポータル・`xdg-utils`・Vulkanドライバ。`rust>=1:1.98` を要求 (`rust-toolchain.toml` が 1.98.1 のため)。
+- `makepkg` が無いので、**PKGBUILDの関数を、`makepkg` と同じ順で実行するシミュレーション**で確かめた: クリーンな clone から `pkgver` → `prepare` → `build` → `package`。各関数は `$srcdir` から別のサブシェルで呼ぶ (最初のシミュレーションは、`cd` を引きずって失敗したが、PKGBUILDではなくシミュレーションの誤りだった)。結果: ビルド 2分38秒、パッケージの中身は10ファイル、できた実行ファイルが起動した。`namcap` と、実際の `makepkg` は未実施。
+
+### Nix (`flake.nix` + `nix/package.nix`)
+- `rust-overlay` で `rust-toolchain.toml` のRustを使い (nixpkgsのRustは古いことがある)、`buildRustPackage` でビルド。`Cargo.lock` の git の依存 (GPUI など) は `allowBuiltinFetchGit`。`src` は `lib.fileset` で必要なものだけ (`target/` などでキャッシュが無効にならない)。
+- GPUI が実行時に読み込む (dlopen する) Wayland・Vulkan・OpenGL・フォントのライブラリは、`wrapProgram` で `LD_LIBRARY_PATH` に足す。`xdg-open` の場所も `PATH` に足す。`.desktop` の `Exec` は、`$out/bin/chihayaburu` の絶対パスに置き換える。`apps` と `devShells` も用意。
+- **この環境には Nix が無く、評価もビルドも一度もできていない**。括弧の対応を調べただけ。特に、`allowBuiltinFetchGit` が flake の純粋な評価で通るか、`libGL` などの属性名が今の nixpkgs にあるかは、実際に試すまで分からない。
+
+### ライセンス
+- リポジトリに `LICENSE` ファイルが無い (`Cargo.toml` で `Apache-2.0` と宣言しているだけ)。この宣言は、最初に私が既定として置いたもので、ユーザーに確認していない。Debian の `copyright` は `/usr/share/common-licenses/Apache-2.0` を指し、Arch・Nix は `Apache-2.0` を名乗っている。ライセンスは、ユーザーの判断で決め、`LICENSE` を追加する必要がある。
