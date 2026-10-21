@@ -24,3 +24,6 @@ rustc-ice-*.txt
 #.idea/
 
 sample.pdf
+
+# deb などの成果物
+dist/
