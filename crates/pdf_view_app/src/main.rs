@@ -1,9 +1,15 @@
+mod app_window;
+mod resize;
+mod titlebar;
+
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
 
 use gpui::{App, AppContext as _, Bounds, Focusable as _, WindowBounds, WindowOptions, px, size};
 use gpui_platform::application;
 use pdf_core::PdfDocument;
 use pdf_viewer::PdfView;
+
+use app_window::AppWindow;
 
 const USAGE: &str = "使い方: pdf_view_app <file.pdf>";
 
@@ -21,16 +27,18 @@ fn open_window(document: Arc<PdfDocument>, title: String, cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(gpui::TitlebarOptions {
-            title: Some(title.into()),
+            title: Some(title.clone().into()),
             ..Default::default()
         }),
+        // 枠(タイトルバー)は自前で描画する。
+        window_decorations: Some(gpui::WindowDecorations::Client),
         ..Default::default()
     };
     cx.open_window(options, |window, cx| {
         let view = cx.new(|cx| PdfView::new(document, cx));
         // キーボード操作(ページ移動・ズーム)を受けられるよう、最初からフォーカスする。
         window.focus(&view.focus_handle(cx), cx);
-        view
+        cx.new(|_| AppWindow::new(title.into(), view))
     })
     .expect("ウィンドウを開けませんでした");
     cx.activate(true);
