@@ -14,7 +14,10 @@ use hayro::{
 };
 use lru::LruCache;
 
-use crate::{OutlineItem, PdfError, RenderedPage, dest::page_index_by_id, outline::read_outline};
+use crate::{
+    Link, OutlineItem, PdfError, RenderedPage, dest::page_index_by_id, links::read_links,
+    outline::read_outline,
+};
 
 /// キャッシュするページ画像の既定の最大枚数。
 const DEFAULT_CACHE_CAPACITY: usize = 16;
@@ -29,18 +32,22 @@ pub struct PdfDocument {
     outline: OnceLock<Vec<OutlineItem>>,
     /// ページオブジェクトの識別子 → ページ番号。目次やリンクの宛先の解決に使う。
     page_ids: OnceLock<HashMap<ObjectIdentifier, usize>>,
+    /// ページごとのリンク。そのページを初めて調べたときに読む。
+    links: Vec<OnceLock<Vec<Link>>>,
 }
 
 impl PdfDocument {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PdfError> {
         let bytes = fs::read(path)?;
         let pdf = Pdf::new(Arc::new(bytes)).map_err(|e| PdfError::Load(format!("{e:?}")))?;
+        let page_count = pdf.pages().len();
         let capacity = NonZeroUsize::new(DEFAULT_CACHE_CAPACITY).unwrap();
         Ok(Self {
             pdf,
             cache: Mutex::new(LruCache::new(capacity)),
             outline: OnceLock::new(),
             page_ids: OnceLock::new(),
+            links: (0..page_count).map(|_| OnceLock::new()).collect(),
         })
     }
 
@@ -98,6 +105,15 @@ impl PdfDocument {
             },
         );
         Ok(RenderedPage::from_pixmap(&pixmap))
+    }
+
+    /// ページ`index`のリンク。初回だけ読み込む。
+    pub fn page_links(&self, index: usize) -> Result<&[Link], PdfError> {
+        let cell = self.links.get(index).ok_or(PdfError::PageOutOfRange {
+            index,
+            count: self.links.len(),
+        })?;
+        Ok(cell.get_or_init(|| read_links(&self.pdf, self.page_ids(), index)))
     }
 
     fn page_ids(&self) -> &HashMap<ObjectIdentifier, usize> {
