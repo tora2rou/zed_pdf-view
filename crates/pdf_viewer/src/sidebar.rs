@@ -18,7 +18,12 @@ const THUMB_WIDTH: f32 = 150.0;
 /// サムネイルの下に出すページ番号の行の高さ。
 const LABEL_HEIGHT: f32 = 20.0;
 const TAB_HEIGHT: f32 = 30.0;
-const OUTLINE_ROW_HEIGHT: f32 = 24.0;
+/// 目次の1行の高さ。開閉ボタンを押しやすいよう、少し高めにしてある。
+const OUTLINE_ROW_HEIGHT: f32 = 30.0;
+/// 開閉ボタン(`+` / `−`)の当たり判定の幅。行の高さいっぱいに広げた領域を押せる。
+const OUTLINE_TOGGLE_WIDTH: f32 = 34.0;
+/// 行の左端の余白。
+const OUTLINE_ROW_PADDING: f32 = 4.0;
 const OUTLINE_INDENT: f32 = 14.0;
 
 const BACKGROUND: u32 = 0x2b2b2b;
@@ -290,7 +295,7 @@ impl PdfView {
         let toggle = div()
             .id(("outline-toggle", index))
             .flex_none()
-            .w(px(18.0))
+            .w(px(OUTLINE_TOGGLE_WIDTH))
             .h_full()
             .flex()
             .items_center()
@@ -303,6 +308,7 @@ impl PdfView {
                         outline_rows::toggle(&mut this.outline_expanded, &path);
                         cx.notify();
                     }))
+                    .text_base()
                     .child(if row.expanded { "−" } else { "+" })
             });
         let page = row.page;
@@ -327,7 +333,7 @@ impl PdfView {
             .items_center()
             .w_full()
             .h(px(OUTLINE_ROW_HEIGHT))
-            .pl(px(6.0 + row.depth as f32 * OUTLINE_INDENT))
+            .pl(px(OUTLINE_ROW_PADDING + row.depth as f32 * OUTLINE_INDENT))
             .pr(px(8.0))
             .hover(|d| d.bg(rgb(HOVER)))
             .child(toggle)
@@ -453,7 +459,10 @@ mod tests {
 
         // 先頭の行("Chapter 1")の開閉ボタン
         let y = 36.0 + TAB_HEIGHT + 4.0 + OUTLINE_ROW_HEIGHT * 0.5;
-        cx.simulate_click(point(px(6.0 + 9.0), px(y)), Modifiers::none());
+        cx.simulate_click(
+            point(px(OUTLINE_ROW_PADDING + OUTLINE_TOGGLE_WIDTH / 2.0), px(y)),
+            Modifiers::none(),
+        );
         cx.run_until_parked();
         assert_eq!(rows(&view, cx), 5);
     }
@@ -511,5 +520,34 @@ mod tests {
             (offset - expected).abs() < 1.0,
             "offset {offset}, expected {expected}"
         );
+    }
+
+    /// 開閉ボタンは、見た目の記号の周りの広い範囲(隅の近くまで)で反応する。
+    #[gpui::test]
+    fn toggle_responds_near_the_corners_of_its_area(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(WITH_OUTLINE, cx);
+        open_sidebar(&view, SidebarTab::Outline, cx);
+        let top = 36.0 + TAB_HEIGHT + 4.0;
+        let expanded = |view: &gpui::Entity<PdfView>, cx: &mut VisualTestContext| {
+            view.read_with(cx, |this, _| this.outline_expanded.contains(&vec![0]))
+        };
+
+        // ボタン領域の左上の隅と右下の隅の、それぞれ2px内側
+        for (dx, dy) in [
+            (2.0, 2.0),
+            (OUTLINE_TOGGLE_WIDTH - 2.0, OUTLINE_ROW_HEIGHT - 2.0),
+        ] {
+            let before = expanded(&view, cx);
+            cx.simulate_click(
+                point(px(OUTLINE_ROW_PADDING + dx), px(top + dy)),
+                Modifiers::none(),
+            );
+            cx.run_until_parked();
+            assert_ne!(
+                before,
+                expanded(&view, cx),
+                "no toggle at offset ({dx}, {dy})"
+            );
+        }
     }
 }
