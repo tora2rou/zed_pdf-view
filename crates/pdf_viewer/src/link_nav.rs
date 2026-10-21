@@ -173,7 +173,7 @@ mod tests {
             let rect = this.document.page_links(0).unwrap()[link].rect;
             let base = this.base_sizes[0];
             let center = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
-            let shown = this.appearance.rotation.rotate_point(base, center);
+            let shown = this.appearance.rotation.point_from_base(base, center);
             let (viewport_width, _) = this.viewport_size(window);
             let page = this.layout(viewport_width).pages[0];
             let (scroll_x, scroll_y) = this.scroll_position();

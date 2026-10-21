@@ -10,6 +10,7 @@ mod notice;
 mod outline_rows;
 mod page_input;
 mod pan;
+mod selection;
 mod sidebar;
 mod toolbar;
 mod transform;

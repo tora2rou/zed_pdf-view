@@ -1,6 +1,6 @@
 //! ページ画像の表示用変換(回転・白黒反転)。GPUIに依存しない純粋関数。
 
-use pdf_core::RenderedPage;
+use pdf_core::{LinkRect as Rect, RenderedPage};
 
 /// 表示上の回転(時計回り)。PDFファイル自体は変更しない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -47,13 +47,34 @@ impl Rotation {
         }
     }
 
-    /// 回転前の画像上の点を、回転後の画像上の点にする(`to_base`の逆)。テストで往復を確かめるのに使う。
-    #[cfg(test)]
-    pub(crate) fn rotate_point(
-        self,
-        (width, height): (f32, f32),
-        (x, y): (f32, f32),
-    ) -> (f32, f32) {
+    /// 回転前の画像上の矩形を、回転後の画像上の矩形(外接矩形)にする。
+    /// `base_size`は回転前の画像の大きさ(幅, 高さ)。
+    pub fn rotate_rect(self, base_size: (f32, f32), rect: Rect) -> Rect {
+        let corners = [
+            (rect.x, rect.y),
+            (rect.x + rect.width, rect.y),
+            (rect.x, rect.y + rect.height),
+            (rect.x + rect.width, rect.y + rect.height),
+        ]
+        .map(|p| self.point_from_base(base_size, p));
+        let (mut x0, mut y0) = corners[0];
+        let (mut x1, mut y1) = corners[0];
+        for (x, y) in corners {
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+        Rect {
+            x: x0,
+            y: y0,
+            width: x1 - x0,
+            height: y1 - y0,
+        }
+    }
+
+    /// 回転前の画像上の点を、回転後の画像上の点にする(`to_base`の逆)。
+    pub fn point_from_base(self, (width, height): (f32, f32), (x, y): (f32, f32)) -> (f32, f32) {
         match self {
             Self::Deg0 => (x, y),
             Self::Deg90 => (height - y, x),
@@ -180,7 +201,11 @@ mod tests {
             Rotation::Deg270,
         ] {
             for p in [(0.0, 0.0), (10.0, 70.0), (200.0, 100.0), (123.5, 45.25)] {
-                assert_eq!(r.to_base(base, r.rotate_point(base, p)), p, "{r:?} {p:?}");
+                assert_eq!(
+                    r.to_base(base, r.point_from_base(base, p)),
+                    p,
+                    "{r:?} {p:?}"
+                );
             }
         }
     }
@@ -189,17 +214,23 @@ mod tests {
     fn rotating_a_point_matches_rotating_the_image() {
         // 200x100の画像の左上(0,0)の画素は、時計回り90度で右上(100,0)になる
         let base = (200.0, 100.0);
-        assert_eq!(Rotation::Deg90.rotate_point(base, (0.0, 0.0)), (100.0, 0.0));
+        assert_eq!(
+            Rotation::Deg90.point_from_base(base, (0.0, 0.0)),
+            (100.0, 0.0)
+        );
         // 左下(0,100)は左上(0,0)へ
-        assert_eq!(Rotation::Deg90.rotate_point(base, (0.0, 100.0)), (0.0, 0.0));
+        assert_eq!(
+            Rotation::Deg90.point_from_base(base, (0.0, 100.0)),
+            (0.0, 0.0)
+        );
         // 270度: 左上(0,0)は左下(0,200)へ
         assert_eq!(
-            Rotation::Deg270.rotate_point(base, (0.0, 0.0)),
+            Rotation::Deg270.point_from_base(base, (0.0, 0.0)),
             (0.0, 200.0)
         );
         // 180度: 左上は右下へ
         assert_eq!(
-            Rotation::Deg180.rotate_point(base, (0.0, 0.0)),
+            Rotation::Deg180.point_from_base(base, (0.0, 0.0)),
             (200.0, 100.0)
         );
     }
@@ -263,5 +294,46 @@ mod tests {
     #[test]
     fn identity_transform_copies() {
         assert_eq!(transform(&sample(), Appearance::default()), sample());
+    }
+
+    #[test]
+    fn rotating_a_rect_gives_its_bounding_box() {
+        let base = (200.0, 100.0);
+        let rect = Rect {
+            x: 10.0,
+            y: 20.0,
+            width: 50.0,
+            height: 30.0,
+        };
+        // 回転なしは、そのまま
+        assert_eq!(Rotation::Deg0.rotate_rect(base, rect), rect);
+        // 時計回り90度: (x, y) -> (100 - y, x)。幅と高さが入れ替わる
+        assert_eq!(
+            Rotation::Deg90.rotate_rect(base, rect),
+            Rect {
+                x: 50.0,
+                y: 10.0,
+                width: 30.0,
+                height: 50.0
+            }
+        );
+        // 180度: (x, y) -> (200 - x, 100 - y)
+        assert_eq!(
+            Rotation::Deg180.rotate_rect(base, rect),
+            Rect {
+                x: 140.0,
+                y: 50.0,
+                width: 50.0,
+                height: 30.0
+            }
+        );
+        // 4回の90度で元に戻る(サイズも入れ替わって戻る)
+        let mut r = rect;
+        let mut size = base;
+        for _ in 0..4 {
+            r = Rotation::Deg90.rotate_rect(size, r);
+            size = (size.1, size.0);
+        }
+        assert_eq!(r, rect);
     }
 }

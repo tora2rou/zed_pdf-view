@@ -80,6 +80,33 @@ impl Layout {
         inside.then_some((index, x - page.left, y - page.top))
     }
 
+    /// 内容上の点`(x, y)`に最も近いページと、そのページ内での位置(ページの外なら、ページの縁に丸める)。
+    /// ドラッグの途中でマウスがページの外(余白や隙間、別のページの上)に出ても、選択を続けられるようにする。
+    /// ページが1つも無ければ`None`。
+    pub fn nearest_page_point(&self, x: f32, y: f32) -> Option<(usize, f32, f32)> {
+        if self.pages.is_empty() {
+            return None;
+        }
+        // yに最も近い(含んでいれば距離0の)ページ
+        let index = self
+            .pages
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                let distance = |p: &PageRect| (p.top - y).max(0.0).max(y - p.bottom());
+                distance(a)
+                    .partial_cmp(&distance(b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(i, _)| i)?;
+        let page = self.pages[index];
+        Some((
+            index,
+            (x - page.left).clamp(0.0, page.width),
+            (y - page.top).clamp(0.0, page.height),
+        ))
+    }
+
     /// `scroll_top`を、実際にスクロールできる範囲(0〜内容の高さ−表示の高さ)に収める。
     ///
     /// GPUIは、勢いよくスクロールした直後に1フレームだけ範囲外の位置を返すことがある
@@ -232,5 +259,34 @@ mod tests {
         assert_eq!(l.hit_page(20.0, 230.0), None); // 幅の狭いページの左の空き
         assert_eq!(l.hit_page(50.0, 9999.0), None); // 末尾より下
         assert_eq!(compute(&[], 1.0, 0.0).hit_page(10.0, 10.0), None);
+    }
+
+    #[test]
+    fn nearest_page_point_is_exact_inside_a_page() {
+        let l = compute(&SIZES, 1.0, 0.0);
+        assert_eq!(l.nearest_page_point(50.0, 112.0), Some((0, 38.0, 100.0)));
+    }
+
+    #[test]
+    fn nearest_page_point_clamps_outside_the_page() {
+        let l = compute(&SIZES, 1.0, 0.0);
+        // 左の余白(x=5)→ページ0の左端、上の余白→上端
+        assert_eq!(l.nearest_page_point(5.0, 50.0), Some((0, 0.0, 38.0)));
+        assert_eq!(l.nearest_page_point(50.0, 2.0), Some((0, 38.0, 0.0)));
+        // 末尾より下は、最後のページの下端
+        assert_eq!(l.nearest_page_point(50.0, 9999.0), Some((2, 38.0, 200.0)));
+    }
+
+    #[test]
+    fn nearest_page_point_in_a_gap_picks_the_closer_page() {
+        let l = compute(&SIZES, 1.0, 0.0);
+        // ページ0の下端は212、ページ1の上端は224。隙間(212〜224)の中で近い方を選ぶ
+        assert_eq!(l.nearest_page_point(50.0, 214.0).unwrap().0, 0);
+        assert_eq!(l.nearest_page_point(50.0, 222.0).unwrap().0, 1);
+    }
+
+    #[test]
+    fn nearest_page_point_without_pages_is_none() {
+        assert_eq!(compute(&[], 1.0, 0.0).nearest_page_point(0.0, 0.0), None);
     }
 }
