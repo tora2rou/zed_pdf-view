@@ -25,23 +25,9 @@ pub fn thumb(track: f32, viewport: f32, content: f32, offset: f32) -> Option<Thu
     })
 }
 
-/// つまみを`delta`だけドラッグしたときの、スクロール位置。`start`はドラッグ開始時のスクロール位置。
+/// つまみの上端がトラック上端から`thumb_top`の位置に来るような、スクロール位置。
 /// 結果は`0..=content - viewport`に収まる。
-pub fn dragged_offset(track: f32, viewport: f32, content: f32, start: f32, delta: f32) -> f32 {
-    let max_offset = (content - viewport).max(0.0);
-    let Some(thumb) = thumb(track, viewport, content, start) else {
-        return 0.0;
-    };
-    let movable = track - thumb.len;
-    if movable <= 0.0 {
-        return start.clamp(0.0, max_offset);
-    }
-    (start + delta * max_offset / movable).clamp(0.0, max_offset)
-}
-
-/// トラック上の`position`(上端からの距離)をクリックしたときの、スクロール位置。
-/// つまみの中心がクリックした位置に来るようにする。
-pub fn offset_at(track: f32, viewport: f32, content: f32, position: f32) -> f32 {
+pub fn offset_for_thumb_top(track: f32, viewport: f32, content: f32, thumb_top: f32) -> f32 {
     let max_offset = (content - viewport).max(0.0);
     let Some(thumb) = thumb(track, viewport, content, 0.0) else {
         return 0.0;
@@ -50,7 +36,14 @@ pub fn offset_at(track: f32, viewport: f32, content: f32, position: f32) -> f32 
     if movable <= 0.0 {
         return 0.0;
     }
-    ((position - thumb.len / 2.0) / movable * max_offset).clamp(0.0, max_offset)
+    (thumb_top / movable * max_offset).clamp(0.0, max_offset)
+}
+
+/// トラック上の`position`(上端からの距離)をクリックしたときの、スクロール位置。
+/// つまみの中心がクリックした位置に来るようにする。
+pub fn offset_at(track: f32, viewport: f32, content: f32, position: f32) -> f32 {
+    let len = thumb(track, viewport, content, 0.0).map_or(0.0, |t| t.len);
+    offset_for_thumb_top(track, viewport, content, position - len / 2.0)
 }
 
 #[cfg(test)]
@@ -67,7 +60,13 @@ mod tests {
     #[test]
     fn thumb_length_is_proportional_to_the_visible_share() {
         let t = thumb(500.0, 500.0, 1000.0, 0.0).unwrap();
-        assert_eq!(t, Thumb { top: 0.0, len: 250.0 });
+        assert_eq!(
+            t,
+            Thumb {
+                top: 0.0,
+                len: 250.0
+            }
+        );
     }
 
     #[test]
@@ -87,16 +86,16 @@ mod tests {
     }
 
     #[test]
-    fn dragging_the_thumb_to_the_end_scrolls_to_the_end() {
-        // つまみ250pxを250px動かすと、最後までスクロールする
-        assert_eq!(dragged_offset(500.0, 500.0, 1000.0, 0.0, 250.0), 500.0);
-        assert_eq!(dragged_offset(500.0, 500.0, 1000.0, 0.0, 9999.0), 500.0);
-        assert_eq!(dragged_offset(500.0, 500.0, 1000.0, 500.0, -9999.0), 0.0);
+    fn moving_the_thumb_to_the_end_scrolls_to_the_end() {
+        // つまみ250pxをトラック末尾(上端250px)に置くと、最後までスクロールする
+        assert_eq!(offset_for_thumb_top(500.0, 500.0, 1000.0, 250.0), 500.0);
+        assert_eq!(offset_for_thumb_top(500.0, 500.0, 1000.0, 9999.0), 500.0);
+        assert_eq!(offset_for_thumb_top(500.0, 500.0, 1000.0, -9999.0), 0.0);
     }
 
     #[test]
-    fn dragging_moves_proportionally() {
-        assert_eq!(dragged_offset(500.0, 500.0, 1000.0, 100.0, 50.0), 200.0);
+    fn thumb_position_maps_proportionally() {
+        assert_eq!(offset_for_thumb_top(500.0, 500.0, 1000.0, 125.0), 250.0);
     }
 
     #[test]

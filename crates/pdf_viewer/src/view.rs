@@ -17,6 +17,7 @@ use crate::{
     outline_rows::OutlinePath,
     page_input::PageInput,
     pan::dragged_scroll,
+    scrollbar::vertical_scrollbar,
     select::highlight_color,
     selection::Selection,
     sidebar::SidebarTab,
@@ -625,12 +626,32 @@ impl PdfView {
     }
 
     /// ページを並べた`content`を包む、スクロール・ズーム・ドラッグ操作を受ける領域。
-    fn render_pages_area(&self, content: Div, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn render_pages_area(&self, content: Div, content_height: f32, cx: &mut Context<Self>) -> Div {
+        let view = cx.entity();
+        let scrollbar = vertical_scrollbar(
+            "pdf-scrollbar",
+            &self.scroll_handle,
+            content_height,
+            move |y, _, cx| {
+                view.update(cx, |this, cx| {
+                    let (x, _) = this.scroll_position();
+                    this.set_scroll(x, y, cx);
+                })
+            },
+        );
         div()
-            .id("pdf-scroll")
+            .relative()
             .flex_1()
             .min_w_0()
             .h_full()
+            .child(self.render_scroll_area(content, cx))
+            .children(scrollbar)
+    }
+
+    fn render_scroll_area(&self, content: Div, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .id("pdf-scroll")
+            .size_full()
             .overflow_scroll()
             .track_scroll(&self.scroll_handle)
             .on_scroll(cx.listener(Self::on_scroll))
@@ -697,7 +718,7 @@ impl Render for PdfView {
         let sidebar = self
             .sidebar_open
             .then(|| self.render_sidebar(current, window, cx));
-        let pages_area = self.render_pages_area(content, cx);
+        let pages_area = self.render_pages_area(content, layout.height, cx);
 
         div()
             .when(!editing, |d| d.key_context(KEY_CONTEXT))
@@ -821,5 +842,30 @@ mod tests {
             matches!(this.images.lookup(0, &key), Lookup::Fresh(_))
         });
         assert!(fresh, "page 0 should be re-rendered at the new zoom");
+    }
+
+    /// 本文のスクロールバーのトラックをクリックすると、その位置までスクロールする。
+    #[gpui::test]
+    fn clicking_the_scrollbar_track_scrolls_the_pages(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx);
+        view.update_in(cx, |this, _, cx| this.set_zoom(5.0, (0.0, 0.0), cx));
+        cx.run_until_parked();
+
+        let bounds = view.read_with(cx, |this, _| this.scroll_handle.bounds());
+        let x = bounds.right() - px(3.0);
+        let y = bounds.bottom() - px(5.0);
+        // ズーム後の大きさでバーが描かれるよう、先にマウスを動かして描画させる。
+        cx.simulate_mouse_move(point(x, y), None, gpui::Modifiers::none());
+        cx.simulate_click(point(x, y), gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        let (offset, max) = view.read_with(cx, |this, _| {
+            (
+                -f32::from(this.scroll_handle.offset().y),
+                f32::from(this.scroll_handle.max_offset().y),
+            )
+        });
+        assert!(max > 0.0, "the content should be scrollable");
+        assert!(offset > max * 0.9, "offset {offset} of {max}");
     }
 }
