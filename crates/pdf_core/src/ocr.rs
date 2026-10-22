@@ -79,7 +79,7 @@ fn spawn_error(program: &str, error: &std::io::Error) -> PdfError {
 fn encode_ppm(page: &RenderedPage) -> Vec<u8> {
     let mut out = format!("P6\n{} {}\n255\n", page.width, page.height).into_bytes();
     out.reserve(page.rgba.len() / 4 * 3);
-    for pixel in page.rgba.chunks_exact(4) {
+    for pixel in page.rgba.as_chunks::<4>().0 {
         out.extend_from_slice(&pixel[..3]);
     }
     out
