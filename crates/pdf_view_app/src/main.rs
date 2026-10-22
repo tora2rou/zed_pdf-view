@@ -2,6 +2,7 @@ mod app_window;
 mod logger;
 mod recent;
 mod recent_menu;
+mod reload;
 mod resize;
 mod tab_bar;
 mod titlebar;

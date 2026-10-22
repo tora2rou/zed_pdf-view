@@ -28,6 +28,11 @@ cargo run --release -p pdf_view_app -- path/to/file.pdf
 
 ビルドした実行ファイルは `target/release/pdf_view_app`。
 
+### 自動の再読み込み
+表示中のPDFが書き換わると、約1秒以内に自動で読み直す(スクロール位置・ズーム・回転は保つ)。
+TypstやLaTeXでPDFを書き出し続けるときの、プレビューとして使える。書き込みの途中や、読めないファイルのときは、古い表示を残して待つ。
+読み直すと、OCRの結果は消える(もう一度OCRする)。
+
 ### テスト
 ```sh
 cargo test

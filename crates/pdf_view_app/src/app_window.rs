@@ -5,12 +5,13 @@ use std::{
 
 use gpui::{
     AppContext as _, Context, Decorations, Entity, ExternalPaths, FocusHandle, IntoElement,
-    KeyBinding, PathPromptOptions, Render, SharedString, Window, actions, div, prelude::*, px, rgb,
+    KeyBinding, PathPromptOptions, Render, SharedString, Task, Window, actions, div, prelude::*,
+    px, rgb,
 };
 use pdf_core::{PdfDocument, PdfError};
 use pdf_viewer::PdfView;
 
-use crate::{recent::RecentFiles, resize::resize_handles};
+use crate::{recent::RecentFiles, reload::FileStamp, resize::resize_handles};
 
 actions!(
     pdf_view_app,
@@ -74,12 +75,18 @@ pub struct AppWindow {
     pub(crate) should_move: bool,
     /// PDFを開く前など、ビューがフォーカスを持たないときにキー操作(Ctrl+Oなど)を受けるためのもの。
     pub(crate) focus_handle: FocusHandle,
+    /// 表示中のPDFが書き換わっていないかの確認。持っている間だけ動く。
+    _watch: Task<()>,
 }
 
 /// 開いている1つのPDF。ページ位置やズームはタブごとに持つ。
 pub(crate) struct Tab {
     pub(crate) path: PathBuf,
     pub(crate) viewer: Entity<PdfView>,
+    /// 表示中の文書を読んだときの、ファイルの目印。
+    pub(crate) loaded: Option<FileStamp>,
+    /// 前回の確認で見た、まだ読み込んでいない目印(書き込み途中でないかの確認用)。
+    pub(crate) pending: Option<FileStamp>,
 }
 
 /// ファイル名だけを取り出す。取れなければパス全体。
@@ -112,6 +119,7 @@ impl AppWindow {
             show_recent: false,
             should_move: false,
             focus_handle: cx.focus_handle(),
+            _watch: Self::watch_active_file(window, cx),
         };
         match initial {
             Some((path, document)) => this.show_document(path, document, window, cx),
@@ -133,6 +141,8 @@ impl AppWindow {
             None => {
                 let viewer = cx.new(|cx| PdfView::new(document, cx));
                 self.tabs.push(Tab {
+                    loaded: FileStamp::of(&path),
+                    pending: None,
                     path: path.clone(),
                     viewer,
                 });
