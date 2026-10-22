@@ -9,9 +9,9 @@ use std::{
     },
 };
 
+use build_diag::{Diagnostic, Level};
 use gpui::{ClickEvent, Context, IntoElement, div, prelude::*, px, rgb};
 use pdf_core::PdfDocument;
-use typst_build::{Diagnostic, Level};
 
 use crate::{app_window::AppWindow, editor};
 

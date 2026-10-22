@@ -8,6 +8,7 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+build_diag.workspace = true
 typst = "0.15"
 typst-layout = "0.15"
 typst-pdf = "0.15"

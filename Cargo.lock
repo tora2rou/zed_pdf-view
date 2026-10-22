@@ -746,6 +746,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "build_diag"
+version = "0.1.0"
+
+[[package]]
 name = "built"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4623,6 +4627,7 @@ dependencies = [
 name = "pdf_view_app"
 version = "0.1.0"
 dependencies = [
+ "build_diag",
  "gpui",
  "gpui_platform",
  "log",
@@ -6981,6 +6986,7 @@ dependencies = [
 name = "typst_build"
 version = "0.1.0"
 dependencies = [
+ "build_diag",
  "typst",
  "typst-kit",
  "typst-layout",

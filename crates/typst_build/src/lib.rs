@@ -11,44 +11,9 @@ use typst::{
 use typst_layout::PagedDocument;
 use typst_pdf::PdfOptions;
 
+pub use build_diag::{Diagnostic, Level};
+
 use world::FileWorld;
-
-/// エラーまたは警告1件。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Diagnostic {
-    pub severity: Level,
-    pub message: String,
-    /// 該当するファイル。プロジェクトの外(パッケージなど)のファイルは、仮想パスのまま。
-    pub file: Option<String>,
-    /// 該当するファイルの、ファイルシステム上の場所(エディタで開くための絶対パス)。
-    pub path: Option<PathBuf>,
-    /// 該当する位置(1始まりの行・列)。
-    pub line: Option<usize>,
-    pub column: Option<usize>,
-    pub hints: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Level {
-    Error,
-    Warning,
-}
-
-impl Diagnostic {
-    /// `file:line:column: message`の1行の形。
-    pub fn one_line(&self) -> String {
-        let mut out = String::new();
-        if let Some(file) = &self.file {
-            out.push_str(file);
-            if let (Some(line), Some(column)) = (self.line, self.column) {
-                out.push_str(&format!(":{line}:{column}"));
-            }
-            out.push_str(": ");
-        }
-        out.push_str(&self.message);
-        out
-    }
-}
 
 /// コンパイルに成功した結果。
 #[derive(Debug)]
