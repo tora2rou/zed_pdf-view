@@ -22,8 +22,8 @@ const LANGUAGE_ENV: &str = "PDF_VIEW_OCR_LANG";
 
 /// TSVの単語の行の`level`。
 const WORD_LEVEL: u32 = 5;
-/// これ未満の確信度の単語は捨てる(Tesseractは、ゴミを低い確信度の単語として返すことがある)。
-const MIN_CONFIDENCE: f32 = 10.0;
+/// これ未満の確信度の単語は捨てる。-1は単語以外の行。日本語は正しく読めても0付近の確信度が付くことが
+/// あるので、0は捨てない。
 /// TSVの列の数。最後の列(文字列)に、区切りと同じタブが入ることはない。
 const COLUMNS: usize = 12;
 
@@ -130,7 +130,14 @@ pub fn page_text_from_tsv(tsv: &str, scale: f32) -> PageText {
             continue;
         };
         let line_id = word.line_id;
+        let adjacent_cjk = chars.last().zip(word.text.chars().next()).is_some_and(
+            |(last, next): (&TextChar, char)| {
+                last.text.chars().next().is_some_and(is_cjk) && is_cjk(next)
+            },
+        );
         let gap = match previous_line {
+            // Tesseractは日本語を1文字〜数文字ずつの単語に分けるが、日本語は語の間に空白を書かない。
+            Some(previous) if previous == line_id && adjacent_cjk => Gap::None,
             Some(previous) if previous == line_id => Gap::Space,
             _ => Gap::Line,
         };
@@ -138,6 +145,14 @@ pub fn page_text_from_tsv(tsv: &str, scale: f32) -> PageText {
         push_word(&mut chars, &word, gap, scale);
     }
     PageText { chars }
+}
+
+/// 日本語(かな・漢字・全角)の文字か。
+fn is_cjk(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x3000..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF
+    )
 }
 
 fn push_word(chars: &mut Vec<TextChar>, word: &Word<'_>, first_gap: Gap, scale: f32) {
@@ -177,7 +192,7 @@ impl<'a> Word<'a> {
         }
         let text = fields[11].trim();
         let confidence: f32 = fields[10].parse().ok()?;
-        if text.is_empty() || confidence < MIN_CONFIDENCE {
+        if text.is_empty() || confidence < 0.0 {
             return None;
         }
         let (width, height): (f32, f32) = (fields[8].parse().ok()?, fields[9].parse().ok()?);
@@ -291,7 +306,7 @@ mod tests {
             &tsv(&[
                 "1\t1\t0\t0\t0\t0\t0\t0\t500\t500\t-1\t",
                 "4\t1\t1\t1\t1\t0\t0\t0\t100\t10\t-1\t",
-                "5\t1\t1\t1\t1\t1\t0\t0\t20\t10\t3\tnoise",
+                "5\t1\t1\t1\t1\t1\t0\t0\t20\t10\t-1\tnoise",
                 "5\t1\t1\t1\t1\t2\t0\t0\t20\t10\t90\t   ",
                 "5\t1\t1\t1\t1\t3\t0\t0\t20\t10\t90\tok",
             ]),
@@ -306,6 +321,27 @@ mod tests {
         assert_eq!(text.chars.len(), 3);
         assert_eq!(text.chars[1].rect.x, 40.0);
         assert_eq!(text.chars[1].rect.width, 30.0);
+    }
+
+    #[test]
+    fn a_zero_confidence_word_is_kept() {
+        let text = page_text_from_tsv(&tsv(&["5\t1\t1\t1\t1\t1\t0\t0\t20\t10\t0.0\t認識"]), 1.0);
+        assert_eq!(text.to_plain_string(), "認識");
+    }
+
+    /// 日本語の単語どうしは空白なしでつなぐが、英単語との間や英単語どうしの間には空白を入れる。
+    #[test]
+    fn spaces_are_kept_only_outside_japanese() {
+        let text = page_text_from_tsv(
+            &tsv(&[
+                "5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t90\tOCR",
+                "5\t1\t1\t1\t1\t2\t20\t0\t10\t10\t90\t日",
+                "5\t1\t1\t1\t1\t3\t40\t0\t10\t10\t90\t本",
+                "5\t1\t1\t1\t1\t4\t60\t0\t10\t10\t90\tabc",
+            ]),
+            1.0,
+        );
+        assert_eq!(text.to_plain_string(), "OCR 日本 abc");
     }
 
     #[test]
