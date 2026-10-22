@@ -34,6 +34,12 @@ cargo run --release -p pdf_view_app -- path/to/file.pdf
 エラーの行をクリックすると、エディタでその位置を開く(`zed`、なければ`code`。別のものは環境変数 `PDF_VIEW_EDITOR` に `nvim +{line} {file}` のように指定する。`{file}` `{line}` `{column}` が置き換わる)。再コンパイル中は、タブのファイル名の横に「…」が出る。
 編集は別のエディタ(Zedなど)で行う、プレビュー専用。パッケージ(`@preview/...`)は、Typst Universeから自動でダウンロードする。
 
+### LaTeXの文書
+`.tex` ファイルを開くと、`latexmk`(TeX Live)でPDFにして表示する。`.typ` と同じく、保存すると(`\input` したファイルも含めて)自動でコンパイルし直し、エラーは行つきで画面の下に出る(クリックでエディタが開く)。
+エンジンは、先頭付近の `% !TEX program = lualatex`(`pdflatex` `xelatex` `lualatex` `platex` `uplatex`)で指定する。なければ、クラス(`ltjsarticle` `jsarticle` など)やパッケージから推定し、それも無ければpdfLaTeX。
+`latexmk` がPATHに無いときは、環境変数 `PDF_VIEW_LATEXMK` に場所を指定する。補助ファイル(`.aux` など)は、文書の隣ではなく一時フォルダに作る。
+サンプルは `samples/latex/` と `samples/typst/`。
+
 ### 自動の再読み込み
 表示中のPDFが書き換わると、約1秒以内に自動で読み直す(スクロール位置・ズーム・回転は保つ)。
 TypstやLaTeXでPDFを書き出し続けるときの、プレビューとして使える。書き込みの途中や、読めないファイルのときは、古い表示を残して待つ。

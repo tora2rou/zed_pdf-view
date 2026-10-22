@@ -5,9 +5,9 @@ mod recent;
 mod recent_menu;
 mod reload;
 mod resize;
+mod source_tab;
 mod tab_bar;
 mod titlebar;
-mod typst_tab;
 
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
 
@@ -17,7 +17,7 @@ use pdf_core::PdfDocument;
 
 use app_window::AppWindow;
 
-const USAGE: &str = "使い方: pdf_view_app [file.pdf | file.typ]";
+const USAGE: &str = "使い方: pdf_view_app [file.pdf | file.typ | file.tex]";
 
 /// コマンドライン引数(プログラム名を除く)から、開くPDFのパスを取り出す。
 /// 引数がなければ`None`(PDFを開かずに起動する)。
@@ -35,8 +35,8 @@ fn pdf_path_from_args(mut args: impl Iterator<Item = String>) -> Result<Option<P
 enum Startup {
     /// 読み込み済みのPDF。
     Pdf(PathBuf, Arc<PdfDocument>),
-    /// Typstの文書。ウィンドウを開いてからコンパイルする(重いので、ウィンドウは先に出す)。
-    Typst(PathBuf),
+    /// Typst・LaTeXの文書。ウィンドウを開いてからコンパイルする(重いので、ウィンドウは先に出す)。
+    Source(PathBuf),
 }
 
 fn open_window(startup: Option<Startup>, cx: &mut App) {
@@ -51,9 +51,9 @@ fn open_window(startup: Option<Startup>, cx: &mut App) {
         window_decorations: Some(gpui::WindowDecorations::Client),
         ..Default::default()
     };
-    let (initial, typst) = match startup {
+    let (initial, source) = match startup {
         Some(Startup::Pdf(path, document)) => (Some((path, document)), None),
-        Some(Startup::Typst(path)) => (None, Some(path)),
+        Some(Startup::Source(path)) => (None, Some(path)),
         None => (None, None),
     };
     let window = cx
@@ -61,7 +61,7 @@ fn open_window(startup: Option<Startup>, cx: &mut App) {
             cx.new(|cx| AppWindow::new(initial, recent::recent_files_path(), window, cx))
         })
         .expect("ウィンドウを開けませんでした");
-    if let Some(path) = typst {
+    if let Some(path) = source {
         window
             .update(cx, |app, window, cx| app.open_path(path, window, cx))
             .ok();
@@ -80,8 +80,8 @@ fn main() -> ExitCode {
     };
     // 起動時に指定されたファイルが開けないときは、ウィンドウを出さずにエラー終了する。
     let startup = match path {
-        // Typstの文書は、コンパイルに失敗してもエラーつきで開くので、ここでは読まない。
-        Some(path) if typst_tab::is_typst(&path) => Some(Startup::Typst(path)),
+        // Typst・LaTeXの文書は、コンパイルに失敗してもエラーつきで開くので、ここでは読まない。
+        Some(path) if source_tab::is_source(&path) => Some(Startup::Source(path)),
         Some(path) => match PdfDocument::open(&path) {
             Ok(document) => Some(Startup::Pdf(path, Arc::new(document))),
             Err(e) => {

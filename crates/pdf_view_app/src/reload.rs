@@ -1,4 +1,4 @@
-//! 表示中のファイル(PDF、またはTypstの文書とその依存ファイル)が書き換わったら、自動で読み直す。
+//! 表示中のファイル(PDF、またはTypst・LaTeXの文書とその依存ファイル)が書き換わったら、自動で読み直す。
 
 use std::{
     fs,
@@ -10,7 +10,7 @@ use std::{
 use gpui::{AppContext as _, Context, Window};
 use pdf_core::PdfDocument;
 
-use crate::{app_window::AppWindow, typst_tab};
+use crate::{app_window::AppWindow, source_tab};
 
 /// ファイルが変わっていないか調べる間隔。
 pub const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -120,7 +120,7 @@ pub fn step<T: PartialEq + Clone>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Pdf,
-    Typst,
+    Source,
 }
 
 impl AppWindow {
@@ -147,7 +147,7 @@ impl AppWindow {
                 };
                 let alive = match kind {
                     Kind::Pdf => Self::reload_pdf(&this, cx, path, current).await,
-                    Kind::Typst => Self::rebuild_typst(&this, cx, path, paths, current).await,
+                    Kind::Source => Self::rebuild_source(&this, cx, path, paths, current).await,
                 };
                 if !alive {
                     return;
@@ -173,8 +173,8 @@ impl AppWindow {
         .is_ok()
     }
 
-    /// Typstの文書をコンパイルし直して、タブに反映する。ウィンドウが無くなっていたら`false`。
-    async fn rebuild_typst(
+    /// Typst・LaTeXの文書をコンパイルし直して、タブに反映する。ウィンドウが無くなっていたら`false`。
+    async fn rebuild_source(
         this: &gpui::WeakEntity<Self>,
         cx: &mut gpui::AsyncWindowContext,
         path: PathBuf,
@@ -191,14 +191,14 @@ impl AppWindow {
         let source = path.clone();
         let (build, merged) = cx
             .background_spawn(async move {
-                let build = typst_tab::build(&source);
+                let build = source_tab::build(&source);
                 let after = snapshot(&build.dependencies);
                 let merged = merged_snapshot(&before_paths, &before, &build.dependencies, &after);
                 (build, merged)
             })
             .await;
         this.update_in(cx, |this, window, cx| {
-            this.finish_typst(&path, build, merged, window, cx)
+            this.finish_source(&path, build, merged, window, cx)
         })
         .is_ok()
     }
@@ -221,8 +221,8 @@ impl AppWindow {
         if tab.watch.paths != paths {
             return None;
         }
-        let kind = if tab.typst.is_some() {
-            Kind::Typst
+        let kind = if tab.source.is_some() {
+            Kind::Source
         } else {
             Kind::Pdf
         };
@@ -261,10 +261,10 @@ impl AppWindow {
 
     /// コンパイルし直した結果を、`path`のタブに反映する。コンパイルに失敗したときは、古い表示を残して、
     /// エラーを表示する。見張るファイルは、読み込んだ依存ファイルに置き換える。
-    pub(crate) fn finish_typst(
+    pub(crate) fn finish_source(
         &mut self,
         path: &Path,
-        build: typst_tab::Build,
+        build: source_tab::Build,
         snapshot: Snapshot,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -275,8 +275,8 @@ impl AppWindow {
             return;
         };
         tab.watch = Watch::new(build.dependencies, snapshot);
-        if let Some(typst) = &mut tab.typst {
-            typst.diagnostics = build.diagnostics;
+        if let Some(source) = &mut tab.source {
+            source.diagnostics = build.diagnostics;
         }
         if let Some(document) = build.document {
             tab.viewer.update(cx, |view, cx| {

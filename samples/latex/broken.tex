@@ -1,0 +1,14 @@
+% エラーのサンプル。画面の下にエラーが出る。エラーの行をクリックすると、エディタでその位置が開く。
+% 直して(コメントアウトして)保存すると、エラーが消えてPDFが表示される。
+\documentclass{article}
+\begin{document}
+Normal text is fine.
+
+% 1. 存在しないコマンド
+Hello \unknowncommand world.
+
+% 2. 閉じていない括弧(数式の途中)
+\begin{equation}
+  x = \frac{1}{2
+\end{equation}
+\end{document}

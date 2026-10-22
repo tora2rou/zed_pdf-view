@@ -4637,6 +4637,7 @@ dependencies = [
  "build_diag",
  "gpui",
  "gpui_platform",
+ "latex_build",
  "log",
  "pdf_core",
  "pdf_viewer",

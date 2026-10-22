@@ -1,0 +1,41 @@
+% 基本のサンプル(pdfLaTeX)。保存し直すと、開いているChihayaburuが自動で更新される。
+\documentclass[a4paper,11pt]{article}
+\usepackage{amsmath}
+
+\title{LaTeX Preview Sample}
+\author{Chihayaburu}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+This file shows how a \texttt{.tex} document is compiled with \texttt{latexmk}
+and displayed. Edit and save it to see the preview update.
+
+\section{Mathematics}
+The quadratic formula:
+\[
+  x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+\]
+and a sum:
+\begin{equation}
+  \sum_{k=1}^{n} k = \frac{n(n+1)}{2}
+\end{equation}
+
+\section{A table}
+\begin{tabular}{lcl}
+  \hline
+  Feature & Status & Note \\
+  \hline
+  Scrollbars & done & body and sidebar \\
+  Tabs       & done & Ctrl+Tab \\
+  Typst      & done & \texttt{.typ} files \\
+  LaTeX      & done & this file \\
+  \hline
+\end{tabular}
+
+\newpage
+\section{Second page}
+This is the second page. The page number is shown at the bottom.
+\end{document}

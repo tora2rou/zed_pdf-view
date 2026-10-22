@@ -1,0 +1,30 @@
+% !TEX program = lualatex
+% 日本語のサンプル(LuaLaTeX + LuaTeX-ja)。1行目の指定で、使うエンジンを決めている。
+% 指定がなくても、ltjsarticleなどのクラスから自動で推定される。
+\documentclass[a4paper,11pt]{ltjsarticle}
+\usepackage{amsmath}
+
+\title{LaTeXのプレビュー}
+\author{Chihayaburu}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{はじめに}
+これはChihayaburuで\texttt{.tex}ファイルを開いたときの表示を確かめるサンプルです。
+保存すると、自動でコンパイルし直します。
+
+\section{数式}
+二次方程式の解の公式:
+\[
+  x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+\]
+
+\section{箇条書き}
+\begin{itemize}
+  \item 日本語の本文
+  \item 数式
+  \item エラーの表示
+\end{itemize}
+\end{document}

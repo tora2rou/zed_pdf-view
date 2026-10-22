@@ -1,4 +1,4 @@
-//! Typstの文書(`.typ`)を開くタブ。コンパイルしたPDFを表示し、エラーを下に出す。
+//! Typst(`.typ`)・LaTeX(`.tex`)の文書を開くタブ。コンパイルしたPDFを表示し、エラーを下に出す。
 
 use std::{
     fs,
@@ -26,17 +26,35 @@ const PANEL_MAX_HEIGHT: f32 = 160.0;
 /// コンパイルしたPDFを残しておく数。表示中のものと、その前のもの。それより古いものは消す。
 const KEEP_OUTPUTS: usize = 3;
 
-/// Typstの文書を開いているタブの情報。
+/// Typst・LaTeXの文書を開いているタブの情報。
 #[derive(Default)]
-pub struct TypstTab {
+pub struct SourceTab {
     /// 直近のコンパイルのエラーと警告。
     pub diagnostics: Vec<Diagnostic>,
 }
 
-/// `.typ`ファイルか。
-pub fn is_typst(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("typ"))
+/// コンパイルして開く文書の種類。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Typst,
+    Latex,
+}
+
+/// `path`の拡張子から、文書の種類を決める。`.typ`はTypst、`.tex`はLaTeX。それ以外は`None`。
+pub fn kind_of(path: &Path) -> Option<Kind> {
+    let ext = path.extension()?;
+    if ext.eq_ignore_ascii_case("typ") {
+        Some(Kind::Typst)
+    } else if ext.eq_ignore_ascii_case("tex") {
+        Some(Kind::Latex)
+    } else {
+        None
+    }
+}
+
+/// コンパイルして開く文書(`.typ`・`.tex`)か。
+pub fn is_source(path: &Path) -> bool {
+    kind_of(path).is_some()
 }
 
 /// コンパイルの結果。
@@ -49,9 +67,49 @@ pub struct Build {
     pub dependencies: Vec<PathBuf>,
 }
 
+/// コンパイルの結果を、種類によらない形にしたもの。
+struct Compiled {
+    pdf: Vec<u8>,
+    warnings: Vec<Diagnostic>,
+    dependencies: Vec<PathBuf>,
+}
+
+struct Failed {
+    errors: Vec<Diagnostic>,
+    warnings: Vec<Diagnostic>,
+    dependencies: Vec<PathBuf>,
+}
+
+fn compile(source: &Path) -> Result<Compiled, Failed> {
+    match kind_of(source) {
+        Some(Kind::Latex) => latex_build::compile_file(source)
+            .map(|c| Compiled {
+                pdf: c.pdf,
+                warnings: c.warnings,
+                dependencies: c.dependencies,
+            })
+            .map_err(|f| Failed {
+                errors: f.errors,
+                warnings: f.warnings,
+                dependencies: f.dependencies,
+            }),
+        _ => typst_build::compile_file(source)
+            .map(|c| Compiled {
+                pdf: c.pdf,
+                warnings: c.warnings,
+                dependencies: c.dependencies,
+            })
+            .map_err(|f| Failed {
+                errors: f.errors,
+                warnings: f.warnings,
+                dependencies: f.dependencies,
+            }),
+    }
+}
+
 /// `source`をコンパイルして、PDFとして開く。重い処理なので、バックグラウンドで呼ぶ。
 pub fn build(source: &Path) -> Build {
-    match typst_build::compile_file(source) {
+    match compile(source) {
         Ok(compiled) => {
             let mut diagnostics = compiled.warnings;
             let document = match open_pdf(&compiled.pdf) {
@@ -162,11 +220,11 @@ impl AppWindow {
         &self,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
-        let typst = self.tabs.get(self.active)?.typst.as_ref()?;
-        if typst.diagnostics.is_empty() {
+        let source = self.tabs.get(self.active)?.source.as_ref()?;
+        if source.diagnostics.is_empty() {
             return None;
         }
-        let rows = typst.diagnostics.iter().enumerate().map(|(i, d)| {
+        let rows = source.diagnostics.iter().enumerate().map(|(i, d)| {
             let color = match d.severity {
                 Level::Error => ERROR_TEXT,
                 Level::Warning => WARNING_TEXT,
@@ -283,7 +341,7 @@ mod tests {
     fn errors(view: &Entity<AppWindow>, cx: &VisualTestContext) -> usize {
         view.read_with(cx, |this, _| {
             this.tabs[0]
-                .typst
+                .source
                 .as_ref()
                 .unwrap()
                 .diagnostics
@@ -294,11 +352,14 @@ mod tests {
     }
 
     #[test]
-    fn only_typ_files_are_typst() {
-        assert!(is_typst(Path::new("a/doc.typ")));
-        assert!(is_typst(Path::new("DOC.TYP")));
-        assert!(!is_typst(Path::new("doc.pdf")));
-        assert!(!is_typst(Path::new("typ")));
+    fn the_extension_decides_the_kind() {
+        assert_eq!(kind_of(Path::new("a/doc.typ")), Some(Kind::Typst));
+        assert_eq!(kind_of(Path::new("DOC.TYP")), Some(Kind::Typst));
+        assert_eq!(kind_of(Path::new("a/doc.tex")), Some(Kind::Latex));
+        assert_eq!(kind_of(Path::new("DOC.TEX")), Some(Kind::Latex));
+        assert_eq!(kind_of(Path::new("doc.pdf")), None);
+        assert_eq!(kind_of(Path::new("typ")), None);
+        assert!(is_source(Path::new("x.tex")) && !is_source(Path::new("x.txt")));
     }
 
     #[test]
@@ -390,5 +451,91 @@ mod tests {
         });
         settle(cx, 3);
         assert_eq!(view.read_with(cx, |this, _| this.tabs.len()), 1);
+    }
+
+    fn latexmk_available() -> bool {
+        std::process::Command::new("latexmk")
+            .arg("-v")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+    }
+
+    const ONE_PAGE: &str =
+        "\\documentclass{article}\n\\begin{document}\nOne page.\n\\end{document}\n";
+    const TWO_PAGES: &str = "\\documentclass{article}\n\\begin{document}\nPage one.\n\\newpage\nPage two.\n\\end{document}\n";
+
+    /// `.tex`を開くと、コンパイルしたPDFがタブに表示される。(latexmkが無ければ、何もせず通る)
+    #[gpui::test]
+    fn opening_a_tex_file_shows_the_compiled_pdf(cx: &mut TestAppContext) {
+        if !latexmk_available() {
+            return;
+        }
+        let dir = project("tex_open", &[("main.tex", ONE_PAGE)]);
+        let (view, cx) = open(&dir.join("main.tex"), cx);
+        assert_eq!(view.read_with(cx, |this, _| this.tabs.len()), 1);
+        assert_eq!(pages(&view, cx), 1);
+        assert_eq!(errors(&view, cx), 0);
+    }
+
+    /// LaTeXのエラーは、行つきでパネルに出て、タブは空白のページで開く。
+    #[gpui::test]
+    fn a_broken_tex_file_opens_with_its_errors(cx: &mut TestAppContext) {
+        if !latexmk_available() {
+            return;
+        }
+        let src = "\\documentclass{article}\n\\begin{document}\n\\oops\n\\end{document}\n";
+        let dir = project("tex_broken", &[("main.tex", src)]);
+        let (view, cx) = open(&dir.join("main.tex"), cx);
+        assert_eq!(view.read_with(cx, |this, _| this.tabs.len()), 1);
+        assert!(errors(&view, cx) >= 1);
+        let line = view.read_with(cx, |this, _| {
+            this.tabs[0].source.as_ref().unwrap().diagnostics[0].line
+        });
+        assert_eq!(line, Some(3));
+    }
+
+    /// `.tex`を書き換えて保存すると、自動でコンパイルし直す。
+    #[gpui::test]
+    fn saving_a_tex_file_recompiles(cx: &mut TestAppContext) {
+        if !latexmk_available() {
+            return;
+        }
+        let dir = project("tex_edit", &[("main.tex", ONE_PAGE)]);
+        let source = dir.join("main.tex");
+        let (view, cx) = open(&source, cx);
+        assert_eq!(pages(&view, cx), 1);
+
+        fs::write(&source, TWO_PAGES).unwrap();
+        // latexmkの実行には時間がかかるので、長めに待つ。
+        for _ in 0..40 {
+            settle(cx, 2);
+            if pages(&view, cx) == 2 {
+                break;
+            }
+        }
+        assert_eq!(pages(&view, cx), 2);
+    }
+
+    /// `\\input`したファイルを書き換えても、コンパイルし直す。
+    #[gpui::test]
+    fn saving_an_input_file_recompiles(cx: &mut TestAppContext) {
+        if !latexmk_available() {
+            return;
+        }
+        let main = "\\documentclass{article}\n\\begin{document}\n\\input{part}\n\\end{document}\n";
+        let dir = project("tex_input", &[("main.tex", main), ("part.tex", "short\n")]);
+        let (view, cx) = open(&dir.join("main.tex"), cx);
+        assert_eq!(pages(&view, cx), 1);
+
+        fs::write(dir.join("part.tex"), "long\n\\newpage\nlonger\n").unwrap();
+        for _ in 0..40 {
+            settle(cx, 2);
+            if pages(&view, cx) == 2 {
+                break;
+            }
+        }
+        assert_eq!(pages(&view, cx), 2);
     }
 }

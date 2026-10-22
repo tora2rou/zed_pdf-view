@@ -13,9 +13,16 @@ const CONTEXT_LOOKAHEAD: usize = 8;
 pub fn parse(log: &str, base: &Path, main: &Path) -> Vec<Diagnostic> {
     let lines: Vec<&str> = log.lines().collect();
     let mut out: Vec<Diagnostic> = Vec::new();
+    // 緊急停止の理由(`\end`が無いまま終わった、など)。他にエラーが無いときだけ、エラーとして出す。
+    let mut aborted: Option<Diagnostic> = None;
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i];
+        if let Some(message) = line.strip_prefix("! ")
+            && message.trim().starts_with("Emergency stop")
+        {
+            aborted = aborted.or_else(|| abort_reason(&lines[i + 1..], main, base));
+        }
         let found = if let Some((file, number, message)) = file_line_error(line) {
             Some(error_at(file, number, message, &lines[i + 1..], base))
         } else if let Some(message) = line.strip_prefix("! ") {
@@ -30,7 +37,29 @@ pub fn parse(log: &str, base: &Path, main: &Path) -> Vec<Diagnostic> {
         }
         i += 1;
     }
+    if !out.iter().any(|d| d.severity == Level::Error) {
+        out.extend(aborted);
+    }
     out
+}
+
+/// `*** (job aborted, no legal \end found)`の行から、止まった理由を取る。
+fn abort_reason(following: &[&str], main: &Path, base: &Path) -> Option<Diagnostic> {
+    let reason = following
+        .iter()
+        .take(CONTEXT_LOOKAHEAD)
+        .find_map(|l| l.strip_prefix("*** ("))?
+        .trim_end()
+        .trim_end_matches(')');
+    Some(Diagnostic {
+        severity: Level::Error,
+        message: reason.to_string(),
+        file: Some(display(main, base)),
+        path: Some(main.to_path_buf()),
+        line: None,
+        column: None,
+        hints: Vec::new(),
+    })
 }
 
 /// `./main.tex:12: message`の形の行を、ファイル・行番号・メッセージに分ける。
@@ -220,6 +249,23 @@ mod tests {
         assert_eq!(d.message, "File ended while scanning use of \\frac .");
         assert_eq!(d.line, Some(9));
         assert_eq!(d.file.as_deref(), Some("main.tex"));
+    }
+
+    /// 他にエラーが無いまま止まったときは、止まった理由をエラーとして出す。
+    #[test]
+    fn an_abort_without_other_errors_is_reported() {
+        let log = "! Emergency stop.\n<*> basic.tex\n             \n*** (job aborted, no legal \\end found)\n";
+        let d = &run(log)[0];
+        assert_eq!(d.severity, Level::Error);
+        assert_eq!(d.message, "job aborted, no legal \\end found");
+        assert_eq!(d.file.as_deref(), Some("main.tex"));
+    }
+
+    /// 他にエラーがあるときは、止まった理由は重ねて出さない。
+    #[test]
+    fn an_abort_after_a_real_error_is_not_repeated() {
+        let log = "./main.tex:4: Undefined control sequence.\nl.4 \\foo\n! Emergency stop.\n<*> main.tex\n*** (job aborted, no legal \\end found)\n";
+        assert_eq!(run(log).len(), 1);
     }
 
     #[test]

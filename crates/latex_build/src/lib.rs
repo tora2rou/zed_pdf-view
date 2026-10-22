@@ -169,7 +169,12 @@ fn run(
             arg.push(outdir);
             arg
         })
-        .arg(main)
+        // 文書は、フォルダの中の名前で渡す(絶対パスだと、ログの行が長くなって折り返される)。
+        .arg(main.file_name().unwrap_or(main.as_os_str()))
+        // ログの行を折り返さない(折り返されると、長いメッセージが途中で切れる)。
+        .env("max_print_line", "10000")
+        .env("error_line", "254")
+        .env("half_error_line", "238")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -382,5 +387,39 @@ mod tests {
         let t = tail(&text);
         assert!(t.contains("line 30") && !t.contains("line 1\n"));
         assert_eq!(tail(""), "latexmkが失敗しました");
+    }
+
+    fn sample(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../samples/latex")
+            .join(name)
+    }
+
+    /// サンプルは、実際にコンパイルできる(壊れていると、試すときに困る)。
+    #[test]
+    fn the_samples_compile() {
+        if !latexmk_available() {
+            return;
+        }
+        for name in ["basic.tex", "japanese.tex", "with-input/main.tex"] {
+            let result = compile_file(&sample(name));
+            assert!(
+                result.is_ok(),
+                "{name}: {:?}",
+                result.err().map(|f| f.errors)
+            );
+        }
+    }
+
+    /// エラーのサンプルは、期待どおりの位置でエラーを返す。
+    #[test]
+    fn the_broken_sample_reports_its_errors() {
+        if !latexmk_available() {
+            return;
+        }
+        let failure = compile_file(&sample("broken.tex")).unwrap_err();
+        let first = &failure.errors[0];
+        assert_eq!(first.message, "Undefined control sequence.");
+        assert_eq!(first.line, Some(8));
     }
 }

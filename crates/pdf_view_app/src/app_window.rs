@@ -15,7 +15,7 @@ use crate::{
     recent::RecentFiles,
     reload::{Watch, merged_snapshot, snapshot},
     resize::resize_handles,
-    typst_tab::{self, TypstTab, is_typst},
+    source_tab::{self, SourceTab, is_source},
 };
 
 actions!(
@@ -80,7 +80,7 @@ pub struct AppWindow {
     pub(crate) should_move: bool,
     /// PDFを開く前など、ビューがフォーカスを持たないときにキー操作(Ctrl+Oなど)を受けるためのもの。
     pub(crate) focus_handle: FocusHandle,
-    /// コンパイル中のTypstの文書(タブの`path`)。タブに「…」を出す。
+    /// コンパイル中のTypst・LaTeXの文書(タブの`path`)。タブに「…」を出す。
     pub(crate) compiling: Vec<PathBuf>,
     /// 表示中のPDFが書き換わっていないかの確認。持っている間だけ動く。
     _watch: Task<()>,
@@ -92,8 +92,8 @@ pub(crate) struct Tab {
     pub(crate) viewer: Entity<PdfView>,
     /// 見張っているファイル(PDF、またはTypstの文書とその依存)と、その状態。
     pub(crate) watch: Watch,
-    /// Typstの文書を開いているタブなら、その情報。
-    pub(crate) typst: Option<TypstTab>,
+    /// Typst・LaTeXの文書を開いているタブなら、その情報。
+    pub(crate) source: Option<SourceTab>,
 }
 
 /// ファイル名だけを取り出す。取れなければパス全体。
@@ -154,7 +154,7 @@ impl AppWindow {
         path: PathBuf,
         document: Arc<PdfDocument>,
         watch: Watch,
-        typst: Option<TypstTab>,
+        source: Option<SourceTab>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -166,7 +166,7 @@ impl AppWindow {
                     path: path.clone(),
                     viewer,
                     watch,
-                    typst,
+                    source,
                 });
                 self.tabs.len() - 1
             }
@@ -183,11 +183,11 @@ impl AppWindow {
         cx.notify();
     }
 
-    /// `path`のファイルをバックグラウンドで読み込んで表示する。Typstの文書(`.typ`)ならコンパイルして
+    /// `path`のファイルをバックグラウンドで読み込んで表示する。Typst(`.typ`)・LaTeX(`.tex`)の文書ならコンパイルして
     /// PDFを表示する。失敗したらエラーを表示する。
     pub(crate) fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        if is_typst(&path) {
-            self.open_typst(path, window, cx);
+        if is_source(&path) {
+            self.open_source(path, window, cx);
             return;
         }
         cx.spawn_in(window, async move |this, cx| {
@@ -207,9 +207,9 @@ impl AppWindow {
         .detach();
     }
 
-    /// Typstの文書をコンパイルして、新しいタブで表示する(開いていればそのタブへ切り替える)。
+    /// Typst・LaTeXの文書をコンパイルして、新しいタブで表示する(開いていればそのタブへ切り替える)。
     /// コンパイルに失敗しても、エラーつきのタブを開く。直して保存すると、自動でコンパイルし直す。
-    fn open_typst(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_source(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(index) = self.tabs.iter().position(|tab| tab.path == path) {
             self.activate_tab(index, window, cx);
             return;
@@ -220,7 +220,7 @@ impl AppWindow {
                 .background_spawn(async move {
                     let before_paths = vec![source.clone()];
                     let before = snapshot(&before_paths);
-                    let build = typst_tab::build(&source);
+                    let build = source_tab::build(&source);
                     let after = snapshot(&build.dependencies);
                     let merged =
                         merged_snapshot(&before_paths, &before, &build.dependencies, &after);
@@ -232,7 +232,7 @@ impl AppWindow {
                 // 最初のコンパイルが失敗したときは、空白のページに、エラーを重ねて見せる。
                 let document = match build.document {
                     Some(document) => document,
-                    None => match typst_tab::blank_document() {
+                    None => match source_tab::blank_document() {
                         Ok(document) => document,
                         Err(e) => {
                             this.error = Some(format!("{}: {e}", file_name(&path)).into());
@@ -241,10 +241,10 @@ impl AppWindow {
                         }
                     },
                 };
-                let typst = TypstTab {
+                let source = SourceTab {
                     diagnostics: build.diagnostics,
                 };
-                this.open_tab(path, Arc::new(document), watch, Some(typst), window, cx);
+                this.open_tab(path, Arc::new(document), watch, Some(source), window, cx);
             })
             .ok();
         })
@@ -257,7 +257,7 @@ impl AppWindow {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Open PDF or Typst".into()),
+            prompt: Some("Open PDF, Typst or LaTeX".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             match selected.await {
