@@ -159,10 +159,11 @@ pub fn render_page_image(
     mode: RenderMode,
 ) -> Result<Arc<RenderImage>, PdfError> {
     let rendered = match mode {
-        RenderMode::Cached => document.render_page(index, scale)?,
-        RenderMode::Uncached => Arc::new(document.render_page_uncached(index, scale)?),
+        // キャッシュと共有しているので、取り出すときに1回コピーする。
+        RenderMode::Cached => Arc::unwrap_or_clone(document.render_page(index, scale)?),
+        RenderMode::Uncached => document.render_page_uncached(index, scale)?,
     };
-    to_render_image(&transform(&rendered, appearance))
+    to_render_image(transform(rendered, appearance))
         .ok_or_else(|| PdfError::Load("画像データのサイズが不正です".into()))
 }
 
@@ -202,7 +203,7 @@ mod tests {
             height: 1,
             rgba: vec![0; 4],
         };
-        to_render_image(&page).unwrap()
+        to_render_image(page).unwrap()
     }
 
     fn appearance(rotation: Rotation) -> Appearance {
