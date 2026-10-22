@@ -57,6 +57,8 @@ pub struct PdfDocument {
     texts: Vec<OnceLock<PageText>>,
     /// ページごとのOCRの結果。あれば`texts`より優先して使う。メモリ上にだけ持つ。
     ocr_texts: Vec<OnceLock<PageText>>,
+    /// OCRした文字から作り直したリンク。あれば`links`より優先して使う。
+    ocr_links: Vec<OnceLock<Vec<Link>>>,
 }
 
 impl PdfDocument {
@@ -71,6 +73,7 @@ impl PdfDocument {
             links: (0..page_count).map(|_| OnceLock::new()).collect(),
             texts: (0..page_count).map(|_| OnceLock::new()).collect(),
             ocr_texts: (0..page_count).map(|_| OnceLock::new()).collect(),
+            ocr_links: (0..page_count).map(|_| OnceLock::new()).collect(),
         })
     }
 
@@ -119,6 +122,9 @@ impl PdfDocument {
             index,
             count: self.links.len(),
         })?;
+        if let Some(ocr) = self.ocr_links[index].get() {
+            return Ok(ocr);
+        }
         Ok(cell.get_or_init(|| {
             let empty = PageText::default();
             let text = self.page_text(index).unwrap_or(&empty);
@@ -129,7 +135,11 @@ impl PdfDocument {
     /// ページ`index`のリンクが、すでに読み込み済みならそれを返す。読み込み中や未読み込みなら`None`で、
     /// 待たずに戻る(画面を更新するスレッドで、重い読み込みを待たないために使う)。
     pub fn page_links_if_ready(&self, index: usize) -> Option<&[Link]> {
-        self.links.get(index)?.get().map(Vec::as_slice)
+        self.ocr_links
+            .get(index)?
+            .get()
+            .or_else(|| self.links.get(index)?.get())
+            .map(Vec::as_slice)
     }
 
     /// ページ`index`の文字が取り出し済みならそれを返す。未取り出しなら`None`で、待たずに戻る
@@ -173,7 +183,10 @@ impl PdfDocument {
         let scale = ocr::OCR_DPI / 72.0;
         let image = self.rasterize(index, scale)?;
         let text = ocr::recognize_page(&image, scale)?;
-        Ok(cell.get_or_init(|| text))
+        let text = cell.get_or_init(|| text);
+        // OCRした文字の中のURLも、リンクとして踏めるようにする。PDFの注釈のリンクは残す。
+        self.ocr_links[index].get_or_init(|| read_links(&self.pdf, self.page_ids(), index, text));
+        Ok(text)
     }
 
     /// ページ`index`がOCR済みか。

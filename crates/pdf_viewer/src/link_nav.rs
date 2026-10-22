@@ -196,6 +196,30 @@ mod tests {
         assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/a"));
     }
 
+    /// 画像のPDFは、OCRするとその中のURLを踏めるようになる。(Tesseractが無ければ、何もせず通る)
+    #[gpui::test]
+    fn clicking_a_url_found_by_ocr_opens_it(cx: &mut TestAppContext) {
+        let (view, cx) = open_view_of(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../pdf_core/tests/fixtures/image_with_url.pdf"
+            ),
+            cx,
+            1.0,
+        );
+        let ocr = view.read_with(cx, |this, _| this.document.ocr_page(0).map(|_| ()));
+        if ocr.is_err() {
+            return;
+        }
+        let at = link_center(&view, cx, 0);
+        cx.simulate_click(at, Modifiers::none());
+        let opened = cx.opened_url().unwrap_or_default();
+        assert!(
+            opened.starts_with("https://example.com/docs/ocr"),
+            "{opened}"
+        );
+    }
+
     #[gpui::test]
     fn clicking_a_mailto_link_opens_it(cx: &mut TestAppContext) {
         let (view, cx) = open_view(cx, 1.0);

@@ -2,7 +2,7 @@
 
 use std::process::Command;
 
-use pdf_core::PdfDocument;
+use pdf_core::{LinkTarget, PdfDocument};
 
 const IMAGE_ONLY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/image_only.pdf");
 
@@ -53,4 +53,38 @@ fn ocr_boxes_lie_within_the_page() {
             "{c:?} in {w}x{h}"
         );
     }
+}
+
+const IMAGE_WITH_URL: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/image_with_url.pdf"
+);
+
+/// OCRで読み取ったURLが、リンクになる(OCR前は無い)。リンクの位置は、そのURLの文字の上にある。
+#[test]
+fn ocr_makes_urls_in_images_clickable() {
+    if !tesseract_available() {
+        return;
+    }
+    let doc = PdfDocument::open(IMAGE_WITH_URL).unwrap();
+    assert!(doc.page_links(0).unwrap().is_empty());
+
+    let text = doc.ocr_page(0).unwrap();
+    let links = doc.page_links(0).unwrap();
+    let uris: Vec<_> = links
+        .iter()
+        .filter_map(|l| match &l.target {
+            LinkTarget::Uri(u) => Some(u.as_str()),
+            LinkTarget::Page(_) => None,
+        })
+        .collect();
+    assert_eq!(uris.len(), 1, "{uris:?} from {:?}", text.to_plain_string());
+    assert!(
+        uris[0].starts_with("https://example.com/docs/ocr"),
+        "{uris:?}"
+    );
+    // 準備済みのリンクとしても取り出せる。
+    assert_eq!(doc.page_links_if_ready(0).unwrap().len(), links.len());
+    // 「no link on this line」の行(下半分)にはリンクがない。
+    assert!(links[0].rect.y < 70.0, "{:?}", links[0].rect);
 }
