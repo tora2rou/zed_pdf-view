@@ -24,25 +24,28 @@ Chihayaburu は、Windowsでもそのままビルドできる(GPUIがWindowsに�
 
    wingetで入らないときは、[UB Mannheimの配布ページ](https://github.com/UB-Mannheim/tesseract/wiki)のインストーラを使ってもよい。
 
-2. **PATHを通す。** 次のフォルダをユーザーの環境変数`Path`に追加し、Chihayaburuとターミナルを開き直す。
+2. **PATHは通さなくてよい。** Chihayaburuは、PATH上の`tesseract`と、次の既定のインストール先を自動で探す。
 
    ```
    C:\Program Files\Tesseract-OCR
+   C:\Program Files (x86)\Tesseract-OCR
+   %LOCALAPPDATA%\Programs\Tesseract-OCR
    ```
+
+   これ以外の場所に入れたときは、環境変数`PDF_VIEW_TESSERACT`に`tesseract.exe`のフルパスを指定する(例: `D:\tools\Tesseract-OCR\tesseract.exe`)。
 
 3. **日本語の言語データを入れる。** インストールしただけだと、日本語(`jpn`)が入っていないことがある。
    [jpn.traineddata](https://github.com/tesseract-ocr/tessdata_fast/raw/main/jpn.traineddata)をダウンロードして、`C:\Program Files\Tesseract-OCR\tessdata\`に置く(管理者権限が要る)。
    インストーラを使うなら、言語の選択の画面で「Japanese」にチェックを入れてもよい。
 
-4. 確認する。`eng`と`jpn`が表示されればよい。
+4. 確認する。`eng`と`jpn`が表示されればよい(PATHを通していないときは、フルパスで実行する)。
 
    ```powershell
-   tesseract --version
-   tesseract --list-langs
+   & "C:\Program Files\Tesseract-OCR\tesseract.exe" --list-langs
    ```
 
 困ったとき:
-- **「tesseractコマンドが見つかりません」と出る**: 手順2のPATHが通っていない。`tesseract --version`がターミナルで動くか確認する。PATHを変えたあとは、Chihayaburuも起動し直す。
+- **「tesseractコマンドが見つかりません」と出る**: 上の既定の場所にもPATHにも無い。`PDF_VIEW_TESSERACT`でフルパスを指定するか、既定の場所に入れ直す。環境変数を変えたあとは、Chihayaburuも起動し直す。
 - **日本語が読めない**: 手順3の`jpn`が入っていない。`tesseract --list-langs`で確認する。
 - **別の言語を使いたい**: 環境変数`PDF_VIEW_OCR_LANG`にTesseractの書式で指定する(例: `jpn+eng`)。
 
