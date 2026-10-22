@@ -1,4 +1,9 @@
-use std::{collections::HashSet, ops::Range, sync::Arc, time::Instant};
+use std::{
+    collections::HashSet,
+    ops::Range,
+    sync::{Arc, atomic::AtomicBool},
+    time::Instant,
+};
 
 use gpui::{
     App, AppContext as _, Context, CursorStyle, Div, FocusHandle, Focusable, MouseButton,
@@ -17,6 +22,7 @@ use crate::{
     outline_rows::OutlinePath,
     page_input::PageInput,
     pan::dragged_scroll,
+    scrollbar::vertical_scrollbar,
     select::highlight_color,
     selection::Selection,
     sidebar::SidebarTab,
@@ -116,6 +122,12 @@ pub struct PdfView {
     /// 画面下部にしばらく出す短いお知らせ(リンクを開いたことなど)。
     pub(crate) notice: Option<SharedString>,
     pub(crate) notice_task: Option<Task<()>>,
+    /// OCRを実行中か。重い処理なので、同時に1つだけ走らせる。
+    pub(crate) ocr_running: bool,
+    /// 実行中のOCRを中断するための印。
+    pub(crate) ocr_cancel: Arc<AtomicBool>,
+    /// OCRの範囲を選ぶメニューを開いているか。
+    pub(crate) ocr_menu_open: bool,
     /// ページ番号入力欄の編集状態。`Some`の間は入力欄がフォーカスを持つ。
     pub(crate) page_input: Option<PageInput>,
     pub(crate) input_focus: FocusHandle,
@@ -161,6 +173,9 @@ impl PdfView {
             links_requested: HashSet::new(),
             notice: None,
             notice_task: None,
+            ocr_running: false,
+            ocr_cancel: Arc::new(AtomicBool::new(false)),
+            ocr_menu_open: false,
             page_input: None,
             input_focus: cx.focus_handle(),
         }
@@ -625,12 +640,32 @@ impl PdfView {
     }
 
     /// ページを並べた`content`を包む、スクロール・ズーム・ドラッグ操作を受ける領域。
-    fn render_pages_area(&self, content: Div, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn render_pages_area(&self, content: Div, content_height: f32, cx: &mut Context<Self>) -> Div {
+        let view = cx.entity();
+        let scrollbar = vertical_scrollbar(
+            "pdf-scrollbar",
+            &self.scroll_handle,
+            content_height,
+            move |y, _, cx| {
+                view.update(cx, |this, cx| {
+                    let (x, _) = this.scroll_position();
+                    this.set_scroll(x, y, cx);
+                })
+            },
+        );
         div()
-            .id("pdf-scroll")
+            .relative()
             .flex_1()
             .min_w_0()
             .h_full()
+            .child(self.render_scroll_area(content, cx))
+            .children(scrollbar)
+    }
+
+    fn render_scroll_area(&self, content: Div, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .id("pdf-scroll")
+            .size_full()
             .overflow_scroll()
             .track_scroll(&self.scroll_handle)
             .on_scroll(cx.listener(Self::on_scroll))
@@ -697,7 +732,7 @@ impl Render for PdfView {
         let sidebar = self
             .sidebar_open
             .then(|| self.render_sidebar(current, window, cx));
-        let pages_area = self.render_pages_area(content, cx);
+        let pages_area = self.render_pages_area(content, layout.height, cx);
 
         div()
             .when(!editing, |d| d.key_context(KEY_CONTEXT))
@@ -719,6 +754,9 @@ impl Render for PdfView {
             .on_action(cx.listener(Self::clear_selection))
             .on_action(cx.listener(Self::hand_tool))
             .on_action(cx.listener(Self::select_tool))
+            .on_action(cx.listener(Self::run_ocr))
+            .on_action(cx.listener(Self::run_ocr_all_pages))
+            .on_action(cx.listener(Self::cancel_ocr))
             .relative()
             .flex()
             .flex_col()
@@ -821,5 +859,30 @@ mod tests {
             matches!(this.images.lookup(0, &key), Lookup::Fresh(_))
         });
         assert!(fresh, "page 0 should be re-rendered at the new zoom");
+    }
+
+    /// 本文のスクロールバーのトラックをクリックすると、その位置までスクロールする。
+    #[gpui::test]
+    fn clicking_the_scrollbar_track_scrolls_the_pages(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx);
+        view.update_in(cx, |this, _, cx| this.set_zoom(5.0, (0.0, 0.0), cx));
+        cx.run_until_parked();
+
+        let bounds = view.read_with(cx, |this, _| this.scroll_handle.bounds());
+        let x = bounds.right() - px(3.0);
+        let y = bounds.bottom() - px(5.0);
+        // ズーム後の大きさでバーが描かれるよう、先にマウスを動かして描画させる。
+        cx.simulate_mouse_move(point(x, y), None, gpui::Modifiers::none());
+        cx.simulate_click(point(x, y), gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        let (offset, max) = view.read_with(cx, |this, _| {
+            (
+                -f32::from(this.scroll_handle.offset().y),
+                f32::from(this.scroll_handle.max_offset().y),
+            )
+        });
+        assert!(max > 0.0, "the content should be scrollable");
+        assert!(offset > max * 0.9, "offset {offset} of {max}");
     }
 }

@@ -4,9 +4,8 @@ use std::{
 };
 
 use gpui::{
-    AppContext as _, Context, Decorations, Entity, ExternalPaths, FocusHandle, Focusable as _,
-    IntoElement, KeyBinding, PathPromptOptions, Render, SharedString, Window, actions, div,
-    prelude::*, px, rgb,
+    AppContext as _, Context, Decorations, Entity, ExternalPaths, FocusHandle, IntoElement,
+    KeyBinding, PathPromptOptions, Render, SharedString, Window, actions, div, prelude::*, px, rgb,
 };
 use pdf_core::{PdfDocument, PdfError};
 use pdf_viewer::PdfView;
@@ -20,6 +19,12 @@ actions!(
         OpenFile,
         /// 最近開いたファイルの一覧を開閉する。
         ToggleRecent,
+        /// 表示中のタブを閉じる。
+        CloseTab,
+        /// 次のタブへ移る。最後のタブからは先頭へ戻る。
+        NextTab,
+        /// 前のタブへ移る。先頭のタブからは最後へ戻る。
+        PreviousTab,
     ]
 );
 
@@ -33,6 +38,10 @@ pub fn init(cx: &mut gpui::App) {
         KeyBinding::new("cmd-o", OpenFile, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-shift-o", ToggleRecent, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-shift-o", ToggleRecent, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-w", CloseTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-w", CloseTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-tab", NextTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, Some(KEY_CONTEXT)),
     ]);
 }
 
@@ -50,7 +59,10 @@ pub const APP_NAME: &str = "Chihayaburu";
 /// PDFを開く前(引数なしで起動したとき)は、案内を表示する。
 pub struct AppWindow {
     pub(crate) title: SharedString,
-    pub(crate) viewer: Option<Entity<PdfView>>,
+    /// 開いているPDF。開いた順に並ぶ。
+    pub(crate) tabs: Vec<Tab>,
+    /// 表示中のタブの番号。`tabs`が空でなければ範囲内。
+    pub(crate) active: usize,
     /// 直近に開こうとして失敗した理由。開くのに成功したら消える。
     pub(crate) error: Option<SharedString>,
     pub(crate) recent: RecentFiles,
@@ -61,11 +73,17 @@ pub struct AppWindow {
     /// タイトルバーのドラッグ開始待ち。最初のマウス移動でウィンドウ移動に切り替える。
     pub(crate) should_move: bool,
     /// PDFを開く前など、ビューがフォーカスを持たないときにキー操作(Ctrl+Oなど)を受けるためのもの。
-    focus_handle: FocusHandle,
+    pub(crate) focus_handle: FocusHandle,
+}
+
+/// 開いている1つのPDF。ページ位置やズームはタブごとに持つ。
+pub(crate) struct Tab {
+    pub(crate) path: PathBuf,
+    pub(crate) viewer: Entity<PdfView>,
 }
 
 /// ファイル名だけを取り出す。取れなければパス全体。
-fn file_name(path: &Path) -> String {
+pub(crate) fn file_name(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -86,7 +104,8 @@ impl AppWindow {
             .unwrap_or_default();
         let mut this = Self {
             title: APP_NAME.into(),
-            viewer: None,
+            tabs: Vec::new(),
+            active: 0,
             error: None,
             recent,
             recent_file,
@@ -102,26 +121,25 @@ impl AppWindow {
     }
 
     /// 読み込み済みの文書を表示し、タイトルと最近のファイルを更新する。
-    fn show_document(
+    pub(crate) fn show_document(
         &mut self,
         path: PathBuf,
         document: Arc<PdfDocument>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match &self.viewer {
-            Some(viewer) => viewer.update(cx, |view, cx| view.set_document(document, window, cx)),
+        let index = match self.tabs.iter().position(|tab| tab.path == path) {
+            Some(index) => index,
             None => {
                 let viewer = cx.new(|cx| PdfView::new(document, cx));
-                self.viewer = Some(viewer);
+                self.tabs.push(Tab {
+                    path: path.clone(),
+                    viewer,
+                });
+                self.tabs.len() - 1
             }
-        }
-        if let Some(viewer) = &self.viewer {
-            // キーボード操作(ページ移動・ズーム)を受けられるよう、フォーカスを渡す。
-            window.focus(&viewer.focus_handle(cx), cx);
-        }
-        self.title = file_name(&path).into();
-        window.set_window_title(&format!("{} - {APP_NAME}", self.title));
+        };
+        self.activate_tab(index, window, cx);
         self.error = None;
         self.show_recent = false;
         self.recent.add(path);
@@ -253,8 +271,11 @@ impl Render for AppWindow {
             && !window.is_fullscreen();
         let maximized = window.is_maximized();
 
-        let content = match &self.viewer {
-            Some(viewer) => div().size_full().child(viewer.clone()).into_any_element(),
+        let content = match self.tabs.get(self.active) {
+            Some(tab) => div()
+                .size_full()
+                .child(tab.viewer.clone())
+                .into_any_element(),
             None => self.render_empty_state(cx).into_any_element(),
         };
 
@@ -263,6 +284,9 @@ impl Render for AppWindow {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::open_file))
             .on_action(cx.listener(Self::toggle_recent))
+            .on_action(cx.listener(Self::close_active_tab))
+            .on_action(cx.listener(Self::next_tab))
+            .on_action(cx.listener(Self::previous_tab))
             .on_drop(cx.listener(Self::on_drop))
             .relative()
             .size_full()
@@ -288,6 +312,7 @@ impl Render for AppWindow {
                         .child(message),
                 )
             })
+            .children(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().w_full().child(content))
             .when(client_side && !maximized, |d| d.children(resize_handles()))
             .children(self.render_recent_overlay(window, cx))
@@ -324,14 +349,14 @@ mod tests {
             cx.notify();
         });
         cx.run_until_parked();
-        assert!(view.read_with(cx, |this, _| this.viewer.is_none()));
+        assert!(view.read_with(cx, |this, _| this.tabs.is_empty()));
 
         // 最初の項目(オーバーレイの先頭)をクリックする。
         cx.simulate_click(point(px(100.0), px(50.0)), Modifiers::none());
         cx.run_until_parked();
 
         let (opened, shown, error) = view.read_with(cx, |this, _| {
-            (this.viewer.is_some(), this.show_recent, this.error.clone())
+            (!this.tabs.is_empty(), this.show_recent, this.error.clone())
         });
         assert!(
             opened,
@@ -356,7 +381,7 @@ mod tests {
                 Modifiers::none(),
             );
             cx.run_until_parked();
-            if view.read_with(cx, |this, _| this.viewer.is_some()) {
+            if view.read_with(cx, |this, _| !this.tabs.is_empty()) {
                 return;
             }
         }
@@ -412,5 +437,43 @@ mod tests {
             view.read_with(cx, |this, _| !this.show_recent),
             "did not close"
         );
+    }
+
+    const OTHER_FIXTURE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../pdf_core/tests/fixtures/with_text.pdf"
+    );
+
+    fn show(view: &Entity<AppWindow>, path: &str, cx: &mut gpui::VisualTestContext) {
+        let document = Arc::new(PdfDocument::open(path).unwrap());
+        view.update_in(cx, |this, window, cx| {
+            this.show_document(PathBuf::from(path), document, window, cx)
+        });
+    }
+
+    /// 別のPDFは新しいタブで開き、そのタブを表示する。開いていたタブは残る。
+    #[gpui::test]
+    fn opening_another_pdf_adds_a_tab(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|window, cx| AppWindow::new(None, None, window, cx));
+        show(&view, FIXTURE, cx);
+        show(&view, OTHER_FIXTURE, cx);
+
+        let (tabs, active, title) = view.read_with(cx, |this, _| {
+            (this.tabs.len(), this.active, this.title.clone())
+        });
+        assert_eq!((tabs, active), (2, 1));
+        assert_eq!(title.as_ref(), "with_text.pdf");
+    }
+
+    /// すでに開いているPDFを開くと、新しいタブを作らずそのタブへ切り替える。
+    #[gpui::test]
+    fn opening_an_open_pdf_switches_to_its_tab(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|window, cx| AppWindow::new(None, None, window, cx));
+        show(&view, FIXTURE, cx);
+        show(&view, OTHER_FIXTURE, cx);
+        show(&view, FIXTURE, cx);
+
+        let (tabs, active) = view.read_with(cx, |this, _| (this.tabs.len(), this.active));
+        assert_eq!((tabs, active), (2, 0));
     }
 }

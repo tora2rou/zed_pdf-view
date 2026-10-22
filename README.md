@@ -11,6 +11,11 @@ Zed用のpdf表示の拡張機能
 
 初回は依存crate(gpui など)のビルドに数分かかる。
 
+### OCR(任意)
+画像だけで作られたPDFの文字を選択・コピーするには、ツールバーの`OCR`ボタンから「This page」(表示中のページ)か「All pages」(全ページ)を選んでOCRする。実行中は`Stop`で中断できる。ショートカットは Ctrl+Shift+R(表示中のページ)と Ctrl+Alt+R(全ページ)。
+外部コマンドの [Tesseract](https://github.com/tesseract-ocr/tesseract) を使うので、`tesseract` をPATHに入れ、言語データ(日本語は `jpn`、英語は `eng`)を用意しておく。
+結果はメモリ上にだけ持ち、PDFファイルは変更しない。言語は環境変数 `PDF_VIEW_OCR_LANG`(例: `jpn+eng`)で上書きできる。
+
 ### ビルドと実行
 ```sh
 # ビルド

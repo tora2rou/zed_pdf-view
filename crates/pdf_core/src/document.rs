@@ -14,7 +14,7 @@ use hayro::{
 
 use crate::{
     Link, OutlineItem, PageText, PdfError, RenderedPage, dest::page_index_by_id, links::read_links,
-    outline::read_outline, text::extract_text,
+    ocr, outline::read_outline, text::extract_text,
 };
 
 /// PDFファイルの中身。メモリマップで読み、必要なページだけをOSに読み込ませる
@@ -55,6 +55,10 @@ pub struct PdfDocument {
     links: Vec<OnceLock<Vec<Link>>>,
     /// ページごとの文字。そのページを初めて調べたときに取り出す。
     texts: Vec<OnceLock<PageText>>,
+    /// ページごとのOCRの結果。あれば`texts`より優先して使う。メモリ上にだけ持つ。
+    ocr_texts: Vec<OnceLock<PageText>>,
+    /// OCRした文字から作り直したリンク。あれば`links`より優先して使う。
+    ocr_links: Vec<OnceLock<Vec<Link>>>,
 }
 
 impl PdfDocument {
@@ -68,6 +72,8 @@ impl PdfDocument {
             page_ids: OnceLock::new(),
             links: (0..page_count).map(|_| OnceLock::new()).collect(),
             texts: (0..page_count).map(|_| OnceLock::new()).collect(),
+            ocr_texts: (0..page_count).map(|_| OnceLock::new()).collect(),
+            ocr_links: (0..page_count).map(|_| OnceLock::new()).collect(),
         })
     }
 
@@ -116,6 +122,9 @@ impl PdfDocument {
             index,
             count: self.links.len(),
         })?;
+        if let Some(ocr) = self.ocr_links[index].get() {
+            return Ok(ocr);
+        }
         Ok(cell.get_or_init(|| {
             let empty = PageText::default();
             let text = self.page_text(index).unwrap_or(&empty);
@@ -126,13 +135,20 @@ impl PdfDocument {
     /// ページ`index`のリンクが、すでに読み込み済みならそれを返す。読み込み中や未読み込みなら`None`で、
     /// 待たずに戻る(画面を更新するスレッドで、重い読み込みを待たないために使う)。
     pub fn page_links_if_ready(&self, index: usize) -> Option<&[Link]> {
-        self.links.get(index)?.get().map(Vec::as_slice)
+        self.ocr_links
+            .get(index)?
+            .get()
+            .or_else(|| self.links.get(index)?.get())
+            .map(Vec::as_slice)
     }
 
     /// ページ`index`の文字が取り出し済みならそれを返す。未取り出しなら`None`で、待たずに戻る
     /// (画面を更新するスレッドで、重い取り出しを待たないために使う)。
     pub fn page_text_if_ready(&self, index: usize) -> Option<&PageText> {
-        self.texts.get(index)?.get()
+        self.ocr_texts
+            .get(index)?
+            .get()
+            .or_else(|| self.texts.get(index)?.get())
     }
 
     /// ページ`index`の文字と位置。初回だけ取り出す(ページの解釈が要るので、重いことがある)。
@@ -141,6 +157,9 @@ impl PdfDocument {
             index,
             count: self.texts.len(),
         })?;
+        if let Some(ocr) = self.ocr_texts[index].get() {
+            return Ok(ocr);
+        }
         Ok(cell.get_or_init(|| {
             self.pdf
                 .pages()
@@ -148,6 +167,31 @@ impl PdfDocument {
                 .map(extract_text)
                 .unwrap_or_default()
         }))
+    }
+
+    /// ページ`index`をOCRして、その結果を以後のページの文字(`page_text`)にする。重い処理。
+    /// すでにOCR済みなら、やり直さずその結果を返す。文書のファイルは変更しない。
+    /// 外部コマンドのTesseractが必要。
+    pub fn ocr_page(&self, index: usize) -> Result<&PageText, PdfError> {
+        let cell = self.ocr_texts.get(index).ok_or(PdfError::PageOutOfRange {
+            index,
+            count: self.ocr_texts.len(),
+        })?;
+        if let Some(done) = cell.get() {
+            return Ok(done);
+        }
+        let scale = ocr::OCR_DPI / 72.0;
+        let image = self.rasterize(index, scale)?;
+        let text = ocr::recognize_page(&image, scale)?;
+        let text = cell.get_or_init(|| text);
+        // OCRした文字の中のURLも、リンクとして踏めるようにする。PDFの注釈のリンクは残す。
+        self.ocr_links[index].get_or_init(|| read_links(&self.pdf, self.page_ids(), index, text));
+        Ok(text)
+    }
+
+    /// ページ`index`がOCR済みか。
+    pub fn is_ocr_done(&self, index: usize) -> bool {
+        self.ocr_texts.get(index).is_some_and(|c| c.get().is_some())
     }
 
     fn page_ids(&self) -> &HashMap<ObjectIdentifier, usize> {
