@@ -19,6 +19,12 @@ actions!(
         OpenFile,
         /// 最近開いたファイルの一覧を開閉する。
         ToggleRecent,
+        /// 表示中のタブを閉じる。
+        CloseTab,
+        /// 次のタブへ移る。最後のタブからは先頭へ戻る。
+        NextTab,
+        /// 前のタブへ移る。先頭のタブからは最後へ戻る。
+        PreviousTab,
     ]
 );
 
@@ -32,6 +38,10 @@ pub fn init(cx: &mut gpui::App) {
         KeyBinding::new("cmd-o", OpenFile, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-shift-o", ToggleRecent, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-shift-o", ToggleRecent, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-w", CloseTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-w", CloseTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-tab", NextTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, Some(KEY_CONTEXT)),
     ]);
 }
 
@@ -268,6 +278,9 @@ impl Render for AppWindow {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::open_file))
             .on_action(cx.listener(Self::toggle_recent))
+            .on_action(cx.listener(Self::close_active_tab))
+            .on_action(cx.listener(Self::next_tab))
+            .on_action(cx.listener(Self::previous_tab))
             .on_drop(cx.listener(Self::on_drop))
             .relative()
             .size_full()

@@ -4,7 +4,7 @@ use gpui::{
     ClickEvent, Context, Focusable as _, IntoElement, MouseButton, Window, div, prelude::*, px, rgb,
 };
 
-use crate::app_window::{APP_TITLE, AppWindow, file_name};
+use crate::app_window::{APP_TITLE, AppWindow, CloseTab, NextTab, PreviousTab, file_name};
 
 pub const TAB_BAR_HEIGHT: f32 = 30.0;
 
@@ -55,6 +55,33 @@ impl AppWindow {
             self.active.min(self.tabs.len() - 1)
         };
         self.activate_tab(active, window, cx);
+    }
+
+    pub(crate) fn close_active_tab(
+        &mut self,
+        _: &CloseTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_tab(self.active, window, cx);
+    }
+
+    pub(crate) fn next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tabs.is_empty() {
+            self.activate_tab((self.active + 1) % self.tabs.len(), window, cx);
+        }
+    }
+
+    pub(crate) fn previous_tab(
+        &mut self,
+        _: &PreviousTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.tabs.is_empty() {
+            let count = self.tabs.len();
+            self.activate_tab((self.active + count - 1) % count, window, cx);
+        }
     }
 
     /// タブバー。開いているPDFがなければ`None`。
@@ -205,5 +232,30 @@ mod tests {
             }
         });
         assert_eq!(state(&view, cx), (0, 0, "PDF Viewer".into()));
+    }
+
+    fn init_keybindings(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            pdf_viewer::init(cx);
+            crate::app_window::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    fn ctrl_tab_cycles_through_the_tabs(cx: &mut TestAppContext) {
+        init_keybindings(cx);
+        let (view, cx) = three_tabs(cx);
+        cx.simulate_keystrokes("ctrl-tab");
+        assert_eq!(state(&view, cx).1, 0);
+        cx.simulate_keystrokes("ctrl-shift-tab");
+        assert_eq!(state(&view, cx).1, 2);
+    }
+
+    #[gpui::test]
+    fn ctrl_w_closes_the_active_tab(cx: &mut TestAppContext) {
+        init_keybindings(cx);
+        let (view, cx) = three_tabs(cx);
+        cx.simulate_keystrokes("ctrl-w");
+        assert_eq!(state(&view, cx), (2, 1, "with_text.pdf".into()));
     }
 }
