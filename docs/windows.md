@@ -12,6 +12,40 @@ Chihayaburu は、Windowsでもそのままビルドできる(GPUIがWindowsに�
    - このリポジトリの `rust-toolchain.toml` により、必要なバージョン(1.98.1)は自動で入る。
 3. **Git for Windows**
 
+## OCRを使うとき(任意): Tesseractのインストール
+
+画像だけのPDFの文字を選択・コピーする`OCR`ボタンは、外部コマンドの[Tesseract](https://github.com/tesseract-ocr/tesseract)を使う。使わないなら入れなくてよい。
+
+1. インストールする(wingetの場合)。
+
+   ```powershell
+   winget install --id UB-Mannheim.TesseractOCR -e
+   ```
+
+   wingetで入らないときは、[UB Mannheimの配布ページ](https://github.com/UB-Mannheim/tesseract/wiki)のインストーラを使ってもよい。
+
+2. **PATHを通す。** 次のフォルダをユーザーの環境変数`Path`に追加し、Chihayaburuとターミナルを開き直す。
+
+   ```
+   C:\Program Files\Tesseract-OCR
+   ```
+
+3. **日本語の言語データを入れる。** インストールしただけだと、日本語(`jpn`)が入っていないことがある。
+   [jpn.traineddata](https://github.com/tesseract-ocr/tessdata_fast/raw/main/jpn.traineddata)をダウンロードして、`C:\Program Files\Tesseract-OCR\tessdata\`に置く(管理者権限が要る)。
+   インストーラを使うなら、言語の選択の画面で「Japanese」にチェックを入れてもよい。
+
+4. 確認する。`eng`と`jpn`が表示されればよい。
+
+   ```powershell
+   tesseract --version
+   tesseract --list-langs
+   ```
+
+困ったとき:
+- **「tesseractコマンドが見つかりません」と出る**: 手順2のPATHが通っていない。`tesseract --version`がターミナルで動くか確認する。PATHを変えたあとは、Chihayaburuも起動し直す。
+- **日本語が読めない**: 手順3の`jpn`が入っていない。`tesseract --list-langs`で確認する。
+- **別の言語を使いたい**: 環境変数`PDF_VIEW_OCR_LANG`にTesseractの書式で指定する(例: `jpn+eng`)。
+
 ## ビルド済みのzipを使う(ビルド不要)
 
 GitHub Actionsが、`windows-exe`ブランチのpushと`v*`タグのたびにexeをビルドする。
