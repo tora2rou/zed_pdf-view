@@ -13,7 +13,7 @@ use crate::scrollbar_math::{offset_at, offset_for_thumb_top, thumb};
 /// バーの見た目の幅。
 const WIDTH: f32 = 10.0;
 /// クリックを受ける幅。見た目のバーの左側に広げてあり、掴み・押しやすくしてある。
-const HIT_WIDTH: f32 = 20.0;
+const HIT_WIDTH: f32 = 36.0;
 const TRACK_COLOR: u32 = 0xffffff10;
 const THUMB_COLOR: u32 = 0x888888cc;
 const THUMB_HOVER_COLOR: u32 = 0xaaaaaaee;
