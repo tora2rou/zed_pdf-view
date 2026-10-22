@@ -3879,6 +3879,7 @@ name = "pdf_core"
 version = "0.1.0"
 dependencies = [
  "hayro",
+ "memmap2",
  "thiserror 2.0.21",
 ]
 

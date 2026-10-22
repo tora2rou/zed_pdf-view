@@ -17,6 +17,34 @@ use crate::{
     outline::read_outline, text::extract_text,
 };
 
+/// PDFファイルの中身。メモリマップで読み、必要なページだけをOSに読み込ませる
+/// (全体を読み込むより常駐メモリが少なく、足りなくなればOSが捨てて読み直せる)。
+/// マップできないとき(空ファイルなど)は普通に読む。
+enum FileData {
+    Mapped(memmap2::Mmap),
+    Read(Vec<u8>),
+}
+
+impl AsRef<[u8]> for FileData {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Mapped(map) => map,
+            Self::Read(bytes) => bytes,
+        }
+    }
+}
+
+fn read_file(path: &Path) -> Result<Arc<FileData>, PdfError> {
+    let file = fs::File::open(path)?;
+    // SAFETY: 開いている間に他のプログラムがファイルを短くすると不正なアクセスになりうる。
+    // PDFビューアとして許容している(Windowsでは、開いている間は上書きできない)。
+    let data = match unsafe { memmap2::Mmap::map(&file) } {
+        Ok(map) => FileData::Mapped(map),
+        Err(_) => FileData::Read(fs::read(path)?),
+    };
+    Ok(Arc::new(data))
+}
+
 pub struct PdfDocument {
     pdf: Pdf,
     /// 目次。初めて必要になったときに読む。
@@ -31,8 +59,8 @@ pub struct PdfDocument {
 
 impl PdfDocument {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PdfError> {
-        let bytes = fs::read(path)?;
-        let pdf = Pdf::new(Arc::new(bytes)).map_err(|e| PdfError::Load(format!("{e:?}")))?;
+        let pdf =
+            Pdf::new(read_file(path.as_ref())?).map_err(|e| PdfError::Load(format!("{e:?}")))?;
         let page_count = pdf.pages().len();
         Ok(Self {
             pdf,
