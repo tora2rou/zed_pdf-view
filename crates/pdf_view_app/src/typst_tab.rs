@@ -9,17 +9,18 @@ use std::{
     },
 };
 
-use gpui::{IntoElement, div, prelude::*, px, rgb};
+use gpui::{ClickEvent, Context, IntoElement, div, prelude::*, px, rgb};
 use pdf_core::PdfDocument;
 use typst_build::{Diagnostic, Level};
 
-use crate::app_window::AppWindow;
+use crate::{app_window::AppWindow, editor};
 
 const PANEL_BACKGROUND: u32 = 0x1e1e1e;
 const PANEL_BORDER: u32 = 0x555555;
 const ERROR_TEXT: u32 = 0xff7b72;
 const WARNING_TEXT: u32 = 0xd29922;
 const HINT_TEXT: u32 = 0x999999;
+const ROW_HOVER: u32 = 0x2c2c2c;
 const PANEL_MAX_HEIGHT: f32 = 160.0;
 
 /// コンパイルしたPDFを残しておく数。表示中のものと、その前のもの。それより古いものは消す。
@@ -79,6 +80,7 @@ fn internal_error(message: String) -> Diagnostic {
         severity: Level::Error,
         message,
         file: None,
+        path: None,
         line: None,
         column: None,
         hints: Vec::new(),
@@ -156,7 +158,10 @@ pub fn blank_document() -> Result<PdfDocument, String> {
 
 impl AppWindow {
     /// 表示中のTypstタブのエラー・警告の一覧。無ければ`None`。
-    pub(crate) fn render_diagnostics(&self) -> Option<impl IntoElement + use<>> {
+    pub(crate) fn render_diagnostics(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
         let typst = self.tabs.get(self.active)?.typst.as_ref()?;
         if typst.diagnostics.is_empty() {
             return None;
@@ -170,11 +175,27 @@ impl AppWindow {
                 Level::Error => "error",
                 Level::Warning => "warning",
             };
+            // 位置が分かるものは、クリックでエディタの該当の位置を開く。
+            let target = d
+                .path
+                .clone()
+                .zip(d.line)
+                .map(|(path, line)| (path, line, d.column.unwrap_or(1)));
             div()
                 .id(("typst-diagnostic", i))
                 .flex()
                 .flex_col()
                 .pb(px(4.0))
+                .when_some(target, |row, (path, line, column)| {
+                    row.cursor_pointer()
+                        .hover(|d| d.bg(rgb(ROW_HOVER)))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            if let Err(message) = editor::open(&path, line, column) {
+                                this.error = Some(message.into());
+                                cx.notify();
+                            }
+                        }))
+                })
                 .child(
                     div()
                         .text_color(rgb(color))

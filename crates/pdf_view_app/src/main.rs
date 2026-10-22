@@ -1,4 +1,5 @@
 mod app_window;
+mod editor;
 mod logger;
 mod recent;
 mod recent_menu;

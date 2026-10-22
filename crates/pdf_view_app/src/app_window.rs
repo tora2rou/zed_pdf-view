@@ -386,7 +386,7 @@ impl Render for AppWindow {
             })
             .children(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().w_full().child(content))
-            .children(self.render_diagnostics())
+            .children(self.render_diagnostics(cx))
             .when(client_side && !maximized, |d| d.children(resize_handles()))
             .children(self.render_recent_overlay(window, cx))
     }

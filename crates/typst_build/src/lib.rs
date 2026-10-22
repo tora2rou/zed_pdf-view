@@ -20,6 +20,8 @@ pub struct Diagnostic {
     pub message: String,
     /// 該当するファイル。プロジェクトの外(パッケージなど)のファイルは、仮想パスのまま。
     pub file: Option<String>,
+    /// 該当するファイルの、ファイルシステム上の場所(エディタで開くための絶対パス)。
+    pub path: Option<PathBuf>,
     /// 該当する位置(1始まりの行・列)。
     pub line: Option<usize>,
     pub column: Option<usize>,
@@ -73,6 +75,7 @@ pub fn compile_file(path: &Path) -> Result<Compiled, Failure> {
             severity: Level::Error,
             message,
             file: Some(path.display().to_string()),
+            path: Some(path.to_path_buf()),
             line: None,
             column: None,
             hints: Vec::new(),
@@ -113,6 +116,7 @@ fn diagnostic(world: &FileWorld, diagnostic: &SourceDiagnostic) -> Diagnostic {
         },
         message: diagnostic.message.to_string(),
         file: location.as_ref().map(|l| l.file.clone()),
+        path: location.as_ref().and_then(|l| l.path.clone()),
         line: location.as_ref().map(|l| l.line),
         column: location.as_ref().map(|l| l.column),
         hints: diagnostic
@@ -125,6 +129,7 @@ fn diagnostic(world: &FileWorld, diagnostic: &SourceDiagnostic) -> Diagnostic {
 
 struct Location {
     file: String,
+    path: Option<PathBuf>,
     line: usize,
     column: usize,
 }
@@ -137,6 +142,7 @@ fn locate(world: &FileWorld, diagnostic: &SourceDiagnostic) -> Option<Location> 
     let (line, column) = source.lines().byte_to_line_column(range.start)?;
     Some(Location {
         file: world.display_name(id),
+        path: world.real_path(id),
         line: line + 1,
         column: column + 1,
     })
@@ -206,6 +212,10 @@ mod tests {
         assert_eq!(first.severity, Level::Error);
         assert_eq!(first.file.as_deref(), Some("main.typ"));
         assert_eq!(first.line, Some(4), "{first:?}");
+        assert_eq!(
+            first.path.as_deref(),
+            Some(dir.canonicalize().unwrap().join("main.typ").as_path())
+        );
         assert!(
             first.one_line().starts_with("main.typ:4:"),
             "{}",

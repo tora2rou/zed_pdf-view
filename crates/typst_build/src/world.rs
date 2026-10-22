@@ -85,6 +85,11 @@ impl FileWorld {
         paths
     }
 
+    /// `id`のファイルの、ファイルシステム上の場所。
+    pub fn real_path(&self, id: FileId) -> Option<PathBuf> {
+        self.files.loader().resolve(id).ok()
+    }
+
     /// 診断の表示用のファイル名。プロジェクト内のファイルはルートからの相対パス。
     pub fn display_name(&self, id: FileId) -> String {
         match self.files.loader().resolve(id) {
