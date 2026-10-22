@@ -4,9 +4,8 @@ use std::{
 };
 
 use gpui::{
-    AppContext as _, Context, Decorations, Entity, ExternalPaths, FocusHandle, Focusable as _,
-    IntoElement, KeyBinding, PathPromptOptions, Render, SharedString, Window, actions, div,
-    prelude::*, px, rgb,
+    AppContext as _, Context, Decorations, Entity, ExternalPaths, FocusHandle, IntoElement,
+    KeyBinding, PathPromptOptions, Render, SharedString, Window, actions, div, prelude::*, px, rgb,
 };
 use pdf_core::{PdfDocument, PdfError};
 use pdf_viewer::PdfView;
@@ -44,7 +43,7 @@ const MUTED_TEXT: u32 = 0x999999;
 const ERROR_BACKGROUND: u32 = 0x5a1e1e;
 
 /// ウィンドウのタイトル(ファイル未選択のとき)。
-const APP_TITLE: &str = "PDF Viewer";
+pub(crate) const APP_TITLE: &str = "PDF Viewer";
 
 /// アプリのウィンドウ全体。自前のタイトルバーとリサイズ領域でPdfViewを包む。
 /// PDFを開く前(引数なしで起動したとき)は、案内を表示する。
@@ -64,7 +63,7 @@ pub struct AppWindow {
     /// タイトルバーのドラッグ開始待ち。最初のマウス移動でウィンドウ移動に切り替える。
     pub(crate) should_move: bool,
     /// PDFを開く前など、ビューがフォーカスを持たないときにキー操作(Ctrl+Oなど)を受けるためのもの。
-    focus_handle: FocusHandle,
+    pub(crate) focus_handle: FocusHandle,
 }
 
 /// 開いている1つのPDF。ページ位置やズームはタブごとに持つ。
@@ -74,7 +73,7 @@ pub(crate) struct Tab {
 }
 
 /// ファイル名だけを取り出す。取れなければパス全体。
-fn file_name(path: &Path) -> String {
+pub(crate) fn file_name(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -112,27 +111,25 @@ impl AppWindow {
     }
 
     /// 読み込み済みの文書を表示し、タイトルと最近のファイルを更新する。
-    fn show_document(
+    pub(crate) fn show_document(
         &mut self,
         path: PathBuf,
         document: Arc<PdfDocument>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match self.tabs.iter().position(|tab| tab.path == path) {
-            Some(index) => self.active = index,
+        let index = match self.tabs.iter().position(|tab| tab.path == path) {
+            Some(index) => index,
             None => {
                 let viewer = cx.new(|cx| PdfView::new(document, cx));
                 self.tabs.push(Tab {
                     path: path.clone(),
                     viewer,
                 });
-                self.active = self.tabs.len() - 1;
+                self.tabs.len() - 1
             }
-        }
-        self.focus_active(window, cx);
-        self.title = file_name(&path).into();
-        window.set_window_title(&self.title);
+        };
+        self.activate_tab(index, window, cx);
         self.error = None;
         self.show_recent = false;
         self.recent.add(path);
@@ -142,13 +139,6 @@ impl AppWindow {
             eprintln!("最近のファイルを保存できません: {e}");
         }
         cx.notify();
-    }
-
-    /// 表示中のタブにフォーカスを渡す。キーボード操作(ページ移動・ズーム)を受けられるようにする。
-    fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(tab) = self.tabs.get(self.active) {
-            window.focus(&tab.viewer.focus_handle(cx), cx);
-        }
     }
 
     /// `path`のPDFをバックグラウンドで読み込んで表示する。失敗したらエラーを表示する。
@@ -303,6 +293,7 @@ impl Render for AppWindow {
                         .child(message),
                 )
             })
+            .children(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().w_full().child(content))
             .when(client_side && !maximized, |d| d.children(resize_handles()))
             .children(self.render_recent_overlay(window, cx))

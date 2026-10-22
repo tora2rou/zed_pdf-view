@@ -3,6 +3,7 @@ mod logger;
 mod recent;
 mod recent_menu;
 mod resize;
+mod tab_bar;
 mod titlebar;
 
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
