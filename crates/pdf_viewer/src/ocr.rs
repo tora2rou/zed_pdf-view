@@ -74,9 +74,10 @@ impl PdfView {
         let document = Arc::clone(&self.document);
         cx.spawn_in(window, async move |this, cx| {
             let total = pages.len();
-            let mut characters = 0;
-            let mut finished = 0;
-            let mut failure = None;
+            let mut outcome = Outcome {
+                total,
+                ..Outcome::default()
+            };
             for (n, index) in pages.into_iter().enumerate() {
                 if cancel.load(Ordering::Relaxed) {
                     break;
@@ -86,7 +87,11 @@ impl PdfView {
                         // OCRの間に別の文書へ差し替えられていたら、そこで終わる。
                         let current = Arc::ptr_eq(&this.document, &document);
                         if current {
-                            this.show_notice(&format!("Running OCR… {}/{total}", n + 1), window, cx);
+                            this.show_notice(
+                                &format!("Running OCR… {}/{total}", n + 1),
+                                window,
+                                cx,
+                            );
                         }
                         current
                     });
@@ -100,32 +105,22 @@ impl PdfView {
                     .await
                 {
                     Ok(count) => {
-                        characters += count;
-                        finished += 1;
+                        outcome.characters += count;
+                        outcome.finished += 1;
                     }
                     Err(e) => {
-                        failure = Some(e.to_string());
+                        outcome.failure = Some(e.to_string());
                         break;
                     }
                 }
             }
-            let cancelled = cancel.load(Ordering::Relaxed);
+            outcome.cancelled = cancel.load(Ordering::Relaxed);
             this.update_in(cx, |this, window, cx| {
                 if !Arc::ptr_eq(&this.document, &document) {
                     return;
                 }
                 this.ocr_running = false;
-                let message = match failure {
-                    Some(error) => error,
-                    None if cancelled => format!("OCR stopped ({finished}/{total} pages done)"),
-                    None if characters == 0 => "OCR found no text".to_string(),
-                    None if total == 1 => {
-                        format!("OCR done ({characters} characters). Use Select (V) to copy")
-                    }
-                    None => format!(
-                        "OCR done ({finished} pages, {characters} characters). Use Select (V) to copy"
-                    ),
-                };
+                let message = outcome.message();
                 this.show_notice(&message, window, cx);
             })
             .ok();
@@ -188,6 +183,42 @@ impl PdfView {
     }
 }
 
+/// 実行したOCRの結果。お知らせの文面のもと。
+#[derive(Default)]
+struct Outcome {
+    /// 対象にしたページ数。
+    total: usize,
+    /// 終えたページ数。
+    finished: usize,
+    /// 読み取った文字数。
+    characters: usize,
+    cancelled: bool,
+    /// 失敗したときのエラーの文面。
+    failure: Option<String>,
+}
+
+impl Outcome {
+    fn message(&self) -> String {
+        let Self {
+            total,
+            finished,
+            characters,
+            ..
+        } = *self;
+        match &self.failure {
+            Some(error) => error.clone(),
+            None if self.cancelled => format!("OCR stopped ({finished}/{total} pages done)"),
+            None if characters == 0 => "OCR found no text".to_string(),
+            None if total == 1 => {
+                format!("OCR done ({characters} characters). Use Select (V) to copy")
+            }
+            None => format!(
+                "OCR done ({finished} pages, {characters} characters). Use Select (V) to copy"
+            ),
+        }
+    }
+}
+
 fn menu_item(id: &'static str, label: &'static str) -> Stateful<gpui::Div> {
     div()
         .id(id)
@@ -235,6 +266,44 @@ mod tests {
             view.read_with(cx, |this, _| (this.ocr_running, this.notice.clone()));
         assert!(!running, "OCR never finished");
         assert!(notice.is_some_and(|n| n.as_ref() != "Running OCR…"));
+    }
+
+    #[test]
+    fn outcome_messages() {
+        let base = || super::Outcome {
+            total: 3,
+            finished: 3,
+            characters: 120,
+            ..Default::default()
+        };
+        assert!(
+            base()
+                .message()
+                .starts_with("OCR done (3 pages, 120 characters)")
+        );
+        let single = super::Outcome {
+            total: 1,
+            finished: 1,
+            ..base()
+        };
+        assert!(single.message().starts_with("OCR done (120 characters)"));
+        let empty = super::Outcome {
+            characters: 0,
+            ..base()
+        };
+        assert_eq!(empty.message(), "OCR found no text");
+        let stopped = super::Outcome {
+            finished: 1,
+            cancelled: true,
+            ..base()
+        };
+        assert_eq!(stopped.message(), "OCR stopped (1/3 pages done)");
+        let failed = super::Outcome {
+            failure: Some("boom".into()),
+            cancelled: true,
+            ..base()
+        };
+        assert_eq!(failed.message(), "boom");
     }
 
     fn open_view(cx: &mut TestAppContext) -> (gpui::Entity<PdfView>, &mut gpui::VisualTestContext) {

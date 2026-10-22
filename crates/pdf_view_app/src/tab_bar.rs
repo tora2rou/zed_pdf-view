@@ -19,6 +19,18 @@ const CLOSE_HOVER: u32 = 0x555555;
 const CLOSE_HIT_EXTRA: f32 = 14.0;
 const TAB_MAX_WIDTH: f32 = 200.0;
 
+/// `active`の次(`forward`でなければ前)のタブの番号。端では反対側へ回る。タブが無ければ`None`。
+fn cycled(active: usize, count: usize, forward: bool) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    Some(if forward {
+        (active + 1) % count
+    } else {
+        (active + count - 1) % count
+    })
+}
+
 impl AppWindow {
     /// `index`のタブを表示する。
     pub(crate) fn activate_tab(
@@ -70,9 +82,7 @@ impl AppWindow {
     }
 
     pub(crate) fn next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.tabs.is_empty() {
-            self.activate_tab((self.active + 1) % self.tabs.len(), window, cx);
-        }
+        self.cycle_tab(true, window, cx);
     }
 
     pub(crate) fn previous_tab(
@@ -81,9 +91,12 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.tabs.is_empty() {
-            let count = self.tabs.len();
-            self.activate_tab((self.active + count - 1) % count, window, cx);
+        self.cycle_tab(false, window, cx);
+    }
+
+    fn cycle_tab(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = cycled(self.active, self.tabs.len(), forward) {
+            self.activate_tab(index, window, cx);
         }
     }
 
@@ -245,6 +258,16 @@ mod tests {
             }
         });
         assert_eq!(state(&view, cx), (0, 0, "PDF Viewer".into()));
+    }
+
+    #[test]
+    fn cycling_wraps_around_both_ends() {
+        use super::cycled;
+        assert_eq!(cycled(0, 3, true), Some(1));
+        assert_eq!(cycled(2, 3, true), Some(0));
+        assert_eq!(cycled(0, 3, false), Some(2));
+        assert_eq!(cycled(1, 3, false), Some(0));
+        assert_eq!(cycled(0, 0, true), None);
     }
 
     fn init_keybindings(cx: &mut TestAppContext) {
