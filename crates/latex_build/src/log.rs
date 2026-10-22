@@ -86,7 +86,7 @@ fn display(path: &Path, base: &Path) -> String {
 }
 
 /// 直後の行にある`l.12 \foo`の文脈の行(と、その続き)。
-fn context<'a>(following: &[&'a str]) -> Option<String> {
+fn context(following: &[&str]) -> Option<String> {
     let (at, line) = following
         .iter()
         .take(CONTEXT_LOOKAHEAD)
