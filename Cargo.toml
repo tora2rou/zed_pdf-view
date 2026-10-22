@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pdf_core", "crates/pdf_viewer", "crates/pdf_view_app"]
+members = ["crates/pdf_core", "crates/pdf_viewer", "crates/pdf_view_app", "crates/typst_build"]
 
 [workspace.package]
 version = "0.1.0"
