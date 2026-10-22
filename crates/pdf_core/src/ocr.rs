@@ -1,8 +1,12 @@
 //! OCR(Tesseract)の出力を、ページの文字(`PageText`)に変換する。
 
 use std::{
+    env,
+    ffi::OsString,
     io::{ErrorKind, Write as _},
+    path::PathBuf,
     process::{Command, Stdio},
+    sync::OnceLock,
     thread,
 };
 
@@ -13,8 +17,15 @@ use crate::{
     text::{Gap, PageText, TextChar},
 };
 
-/// 外部コマンドとして呼ぶTesseractの名前。
+/// 外部コマンドとして呼ぶTesseractの名前。PATHから探す。
 const TESSERACT: &str = "tesseract";
+/// Tesseractの実行ファイルの場所を指定する環境変数。PATHに無い場所のものを使いたいときに使う。
+const PROGRAM_ENV: &str = "PDF_VIEW_TESSERACT";
+/// Windowsで、Tesseractのインストーラが置くフォルダ名。
+const WINDOWS_FOLDER: &str = "Tesseract-OCR";
+/// Windowsで、子プロセスにコンソールの窓を出さないためのフラグ(`CREATE_NO_WINDOW`)。
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// 使いたい言語。入っているものだけを使う。日本語の文書に英単語が混ざるので、両方を渡す。
 const PREFERRED_LANGUAGES: [&str; 2] = ["jpn", "eng"];
 /// 言語を上書きする環境変数(`jpn+eng`のようにTesseractの書式で書く)。
@@ -22,22 +33,93 @@ const LANGUAGE_ENV: &str = "PDF_VIEW_OCR_LANG";
 
 /// TSVの単語の行の`level`。
 const WORD_LEVEL: u32 = 5;
-/// これ未満の確信度の単語は捨てる。-1は単語以外の行。日本語は正しく読めても0付近の確信度が付くことが
-/// あるので、0は捨てない。
 /// TSVの列の数。最後の列(文字列)に、区切りと同じタブが入ることはない。
 const COLUMNS: usize = 12;
 
 /// OCRする画像の解像度(dpi)の目安。小さい文字は、これくらいないと読めない。
 pub const OCR_DPI: f32 = 300.0;
 
+/// 見つかったTesseractの場所。見つかるまでは、毎回探し直す(あとからインストールしても使えるように)。
+static FOUND_PROGRAM: OnceLock<OsString> = OnceLock::new();
+
+/// Windowsでのインストール先の候補を、優先順に並べる。引数は環境変数
+/// `ProgramFiles`、`ProgramFiles(x86)`、`LOCALAPPDATA`の値。
+fn windows_locations(
+    program_files: Option<OsString>,
+    program_files_x86: Option<OsString>,
+    local_app_data: Option<OsString>,
+) -> Vec<PathBuf> {
+    let exe = |base: OsString, parent: &[&str]| {
+        let mut path = PathBuf::from(base);
+        path.extend(parent);
+        path.extend([WINDOWS_FOLDER, "tesseract.exe"]);
+        path
+    };
+    [
+        program_files.map(|b| exe(b, &[])),
+        program_files_x86.map(|b| exe(b, &[])),
+        // 管理者権限なしでインストールしたとき。
+        local_app_data.map(|b| exe(b, &["Programs"])),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// 実行するTesseract。環境変数で指定されていればそれ。なければPATH上の`tesseract`。
+/// なければ(Windowsでは)インストーラの既定の場所。どこにも無ければ、エラーを出せるよう名前だけを返す。
+fn find_program() -> OsString {
+    if let Some(path) = env::var_os(PROGRAM_ENV).filter(|p| !p.is_empty()) {
+        return path;
+    }
+    if let Some(found) = FOUND_PROGRAM.get() {
+        return found.clone();
+    }
+    let found = if runs(TESSERACT.as_ref()) {
+        Some(OsString::from(TESSERACT))
+    } else if cfg!(windows) {
+        windows_locations(
+            env::var_os("ProgramFiles"),
+            env::var_os("ProgramFiles(x86)"),
+            env::var_os("LOCALAPPDATA"),
+        )
+        .into_iter()
+        .find(|path| path.is_file())
+        .map(PathBuf::into_os_string)
+    } else {
+        None
+    };
+    match found {
+        Some(found) => FOUND_PROGRAM.get_or_init(|| found).clone(),
+        None => OsString::from(TESSERACT),
+    }
+}
+
+/// `program --version`が起動できるか。
+fn runs(program: &std::ffi::OsStr) -> bool {
+    command(program).arg("--version").output().is_ok()
+}
+
+/// 子プロセスを作る。Windowsでは、コンソールの窓が出ないようにする。
+fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
 /// Tesseractに渡す言語。環境変数があればそれ、なければ入っている言語のうち使いたいもの。
-fn language(program: &str) -> Result<String, PdfError> {
+fn language(program: &std::ffi::OsStr) -> Result<String, PdfError> {
     if let Ok(lang) = std::env::var(LANGUAGE_ENV)
         && !lang.trim().is_empty()
     {
         return Ok(lang.trim().to_string());
     }
-    let output = Command::new(program)
+    let output = command(program)
         .arg("--list-langs")
         .output()
         .map_err(|e| spawn_error(program, &e))?;
@@ -65,10 +147,11 @@ fn pick_languages(listing: &str) -> Vec<&'static str> {
         .collect()
 }
 
-fn spawn_error(program: &str, error: &std::io::Error) -> PdfError {
+fn spawn_error(program: &std::ffi::OsStr, error: &std::io::Error) -> PdfError {
+    let program = program.to_string_lossy();
     if error.kind() == ErrorKind::NotFound {
         PdfError::Ocr(format!(
-            "{program}コマンドが見つかりません。Tesseractをインストールしてください"
+            "{program}コマンドが見つかりません。Tesseractをインストールするか、{PROGRAM_ENV}にtesseractの場所を指定してください"
         ))
     } else {
         PdfError::Ocr(format!("{program}を起動できません: {error}"))
@@ -86,9 +169,9 @@ fn encode_ppm(page: &RenderedPage) -> Vec<u8> {
 }
 
 /// `page`の画像をTesseract(`program`)でOCRして、TSVを返す。
-fn recognize(program: &str, page: &RenderedPage) -> Result<String, PdfError> {
+fn recognize(program: &std::ffi::OsStr, page: &RenderedPage) -> Result<String, PdfError> {
     let lang = language(program)?;
-    let mut child = Command::new(program)
+    let mut child = command(program)
         .args(["stdin", "stdout", "-l", &lang, "tsv"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -114,7 +197,10 @@ fn recognize(program: &str, page: &RenderedPage) -> Result<String, PdfError> {
 
 /// `page`(`scale`は画素 / ポイント)をOCRして、ページの文字にする。
 pub fn recognize_page(page: &RenderedPage, scale: f32) -> Result<PageText, PdfError> {
-    Ok(page_text_from_tsv(&recognize(TESSERACT, page)?, scale))
+    Ok(page_text_from_tsv(
+        &recognize(&find_program(), page)?,
+        scale,
+    ))
 }
 
 /// Tesseractが出力するTSVから、ページの文字を作る。
@@ -257,8 +343,39 @@ mod tests {
     }
 
     #[test]
+    fn windows_locations_are_tried_in_order() {
+        let paths = windows_locations(
+            Some(r"C:\Program Files".into()),
+            Some(r"C:\Program Files (x86)".into()),
+            Some(r"C:\Users\me\AppData\Local".into()),
+        );
+        let expected = |base: &str, parent: &[&str]| {
+            let mut p = PathBuf::from(base);
+            p.extend(parent);
+            p.extend(["Tesseract-OCR", "tesseract.exe"]);
+            p
+        };
+        assert_eq!(
+            paths,
+            [
+                expected(r"C:\Program Files", &[]),
+                expected(r"C:\Program Files (x86)", &[]),
+                expected(r"C:\Users\me\AppData\Local", &["Programs"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn unset_windows_variables_are_skipped() {
+        assert!(windows_locations(None, None, None).is_empty());
+        let only_local = windows_locations(None, None, Some("L".into()));
+        assert_eq!(only_local.len(), 1);
+        assert!(only_local[0].starts_with("L"));
+    }
+
+    #[test]
     fn a_missing_tesseract_is_reported_clearly() {
-        let error = recognize("pdf-view-no-such-command", &page(1, 1)).unwrap_err();
+        let error = recognize("pdf-view-no-such-command".as_ref(), &page(1, 1)).unwrap_err();
         assert!(
             matches!(&error, PdfError::Ocr(m) if m.contains("見つかりません")),
             "{error}"
