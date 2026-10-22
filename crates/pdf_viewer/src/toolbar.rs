@@ -7,8 +7,8 @@ use gpui::{
 
 use crate::{
     actions::{
-        NextPage, PreviousPage, RotateClockwise, ToggleDarkMode, ToggleFullscreen, ToggleSidebar,
-        ZoomIn, ZoomOut,
+        NextPage, PreviousPage, RotateClockwise, RunOcr, ToggleDarkMode, ToggleFullscreen,
+        ToggleSidebar, ZoomIn, ZoomOut,
     },
     page_input::PageInput,
     view::{PdfView, Tool},
@@ -143,6 +143,9 @@ impl PdfView {
                 )),
             )
             .child(div().w(px(16.0)))
+            .child(button("ocr", "OCR", self.ocr_running).on_click(
+                cx.listener(|this, _: &ClickEvent, window, cx| this.run_ocr(&RunOcr, window, cx)),
+            ))
             .child(button("rotate", "Rotate", false).on_click(cx.listener(
                 |this, _: &ClickEvent, window, cx| {
                     this.rotate_clockwise(&RotateClockwise, window, cx)

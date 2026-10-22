@@ -117,6 +117,8 @@ pub struct PdfView {
     /// 画面下部にしばらく出す短いお知らせ(リンクを開いたことなど)。
     pub(crate) notice: Option<SharedString>,
     pub(crate) notice_task: Option<Task<()>>,
+    /// OCRを実行中か。重い処理なので、同時に1つだけ走らせる。
+    pub(crate) ocr_running: bool,
     /// ページ番号入力欄の編集状態。`Some`の間は入力欄がフォーカスを持つ。
     pub(crate) page_input: Option<PageInput>,
     pub(crate) input_focus: FocusHandle,
@@ -162,6 +164,7 @@ impl PdfView {
             links_requested: HashSet::new(),
             notice: None,
             notice_task: None,
+            ocr_running: false,
             page_input: None,
             input_focus: cx.focus_handle(),
         }
@@ -740,6 +743,7 @@ impl Render for PdfView {
             .on_action(cx.listener(Self::clear_selection))
             .on_action(cx.listener(Self::hand_tool))
             .on_action(cx.listener(Self::select_tool))
+            .on_action(cx.listener(Self::run_ocr))
             .relative()
             .flex()
             .flex_col()

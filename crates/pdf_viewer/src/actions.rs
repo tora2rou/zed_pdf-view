@@ -20,6 +20,8 @@ actions!(
         ClearSelection,
         HandTool,
         SelectTool,
+        /// 表示中のページをOCRして、文字を選択・コピーできるようにする。
+        RunOcr,
     ]
 );
 
@@ -55,5 +57,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("escape", ClearSelection, ctx),
         KeyBinding::new("h", HandTool, ctx),
         KeyBinding::new("v", SelectTool, ctx),
+        KeyBinding::new("ctrl-shift-r", RunOcr, ctx),
+        KeyBinding::new("cmd-shift-r", RunOcr, ctx),
     ]);
 }
