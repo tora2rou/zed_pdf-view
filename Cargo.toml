@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pdf_core", "crates/pdf_viewer", "crates/pdf_view_app", "crates/typst_build", "crates/build_diag", "crates/latex_build"]
+members = ["crates/pdf_core", "crates/pdf_viewer", "crates/pdf_view_app", "crates/typst_build", "crates/build_diag", "crates/latex_build", "crates/epub_build"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,6 +13,7 @@ pdf_viewer = { path = "crates/pdf_viewer" }
 typst_build = { path = "crates/typst_build" }
 build_diag = { path = "crates/build_diag" }
 latex_build = { path = "crates/latex_build" }
+epub_build = { path = "crates/epub_build" }
 hayro = "0.8"
 thiserror = "2"
 memmap2 = "0.9"

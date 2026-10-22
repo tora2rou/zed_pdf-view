@@ -1,0 +1,15 @@
+[package]
+name = "epub_build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+build_diag.workspace = true
+typst_build.workspace = true
+zip = { version = "9", default-features = false, features = ["deflate"] }
+roxmltree = "0.21"
+scraper = "0.29"
