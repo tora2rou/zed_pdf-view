@@ -10,13 +10,18 @@
        PDF を右クリック →「プログラムから開く」→ Chihayaburu →「常に使う」を選ぶ)
 
 .PARAMETER Exe
-    インストールする exe。省略すると、リポジトリの target\release\pdf_view_app.exe。
+    インストールする exe。省略すると、スクリプトの隣の pdf_view_app.exe(配布のzip)、なければリポジトリの target\release\pdf_view_app.exe。
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
 #>
 param(
-    [string]$Exe = (Join-Path $PSScriptRoot '..\..\target\release\pdf_view_app.exe')
+    [string]$Exe = $(
+        # 配布のzip(exeがスクリプトの隣にある)ならそれを、リポジトリ内ならビルド先を使う。
+        $beside = Join-Path $PSScriptRoot 'pdf_view_app.exe'
+        if (Test-Path -LiteralPath $beside) { $beside }
+        else { Join-Path $PSScriptRoot '..\..\target\release\pdf_view_app.exe' }
+    )
 )
 
 $ErrorActionPreference = 'Stop'

@@ -12,6 +12,15 @@ Chihayaburu は、Windowsでもそのままビルドできる(GPUIがWindowsに�
    - このリポジトリの `rust-toolchain.toml` により、必要なバージョン(1.98.1)は自動で入る。
 3. **Git for Windows**
 
+## ビルド済みのzipを使う(ビルド不要)
+
+GitHub Actionsが、`windows-exe`ブランチのpushと`v*`タグのたびにexeをビルドする。
+[Releases](https://github.com/tora2rou/zed_pdf-view/releases) の `Chihayaburu-windows-x64.zip`(タグのとき)、または Actions の実行結果のアーティファクトからダウンロードして、展開した中で次を実行する(下の「3. インストール」と同じ)。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
 ## 2. ビルド
 
 **WSL のフォルダ(`\\wsl.localhost\...`)を直接ビルドしない**(遅く、パスの扱いで失敗することがある)。Windows側のフォルダに clone する。

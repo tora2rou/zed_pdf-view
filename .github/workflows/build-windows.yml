@@ -1,0 +1,47 @@
+name: Build Windows
+
+# windows-exeブランチのpush、手動実行、v*タグで動く。タグのときは、GitHub Releaseにzipを添付する。
+on:
+  push:
+    branches: [windows-exe]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Rustは rust-toolchain.toml のバージョンが自動で入る。MSVCとWindows SDKはrunnerに入っている。
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked -p pdf_view_app
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = 'Chihayaburu-windows-x64'
+          New-Item -ItemType Directory -Path $name | Out-Null
+          Copy-Item target/release/pdf_view_app.exe $name
+          Copy-Item packaging/windows/install.ps1, packaging/windows/uninstall.ps1, docs/windows.md $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Chihayaburu-windows-x64
+          path: Chihayaburu-windows-x64.zip
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Chihayaburu-windows-x64.zip
+          fail_on_unmatched_files: true
