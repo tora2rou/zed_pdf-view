@@ -86,52 +86,27 @@ fn render_page_out_of_range() {
 }
 
 #[test]
-fn render_page_is_cached_per_page_and_scale() {
-    use std::sync::Arc;
-    let doc = PdfDocument::open(FIXTURE).unwrap();
-    let a = doc.render_page(0, 1.0).unwrap();
-    assert!(Arc::ptr_eq(&a, &doc.render_page(0, 1.0).unwrap()));
-    assert!(!Arc::ptr_eq(&a, &doc.render_page(0, 2.0).unwrap()));
-    assert!(!Arc::ptr_eq(&a, &doc.render_page(1, 1.0).unwrap()));
-}
-
-#[test]
-fn cache_evicts_least_recently_used() {
-    use std::{num::NonZeroUsize, sync::Arc};
-    let doc = PdfDocument::open(FIXTURE).unwrap();
-    doc.set_cache_capacity(NonZeroUsize::new(1).unwrap());
-    let a = doc.render_page(0, 1.0).unwrap();
-    doc.render_page(1, 1.0).unwrap();
-    assert!(!Arc::ptr_eq(&a, &doc.render_page(0, 1.0).unwrap()));
-}
-
-#[test]
 fn document_is_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<PdfDocument>();
 }
 
 #[test]
-fn uncached_render_matches_cached_and_leaves_the_cache_alone() {
-    use std::{num::NonZeroUsize, sync::Arc};
+fn render_page_renders_the_same_image_every_time() {
     let doc = PdfDocument::open(FIXTURE).unwrap();
-    doc.set_cache_capacity(NonZeroUsize::new(1).unwrap());
-    let cached = doc.render_page(0, 1.0).unwrap();
-
-    let thumb = doc.render_page_uncached(1, 0.5).unwrap();
+    let thumb = doc.render_page(1, 0.5).unwrap();
     assert_eq!((thumb.width, thumb.height), (150, 100));
-    assert_eq!(doc.render_page_uncached(0, 1.0).unwrap(), *cached);
-
-    // キャッシュは容量1なので、キャッシュ付きで別ページを描くと追い出される。
-    // キャッシュなしの描画では、ページ0は追い出されない。
-    assert!(Arc::ptr_eq(&cached, &doc.render_page(0, 1.0).unwrap()));
+    assert_eq!(
+        doc.render_page(0, 1.0).unwrap(),
+        doc.render_page(0, 1.0).unwrap()
+    );
 }
 
 #[test]
-fn uncached_render_validates_the_scale() {
+fn render_page_validates_the_scale() {
     let doc = PdfDocument::open(FIXTURE).unwrap();
     assert!(matches!(
-        doc.render_page_uncached(0, 0.0),
+        doc.render_page(0, 0.0),
         Err(PdfError::InvalidScale(_))
     ));
 }

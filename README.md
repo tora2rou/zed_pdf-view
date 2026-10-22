@@ -39,7 +39,6 @@ cargo test
 |---|---|---|---|
 | [hayro](https://crates.io/crates/hayro) | 0.8 | PDFのパースとラスタライズ | pdf_core |
 | [thiserror](https://crates.io/crates/thiserror) | 2 | エラー型の定義 | pdf_core |
-| [lru](https://crates.io/crates/lru) | 0.19 | ページ画像のキャッシュ | pdf_core |
 | [gpui](https://github.com/zed-industries/zed) | git (rev `fae8a35`) | UIフレームワーク | pdf_viewer, pdf_view_app |
 | gpui_platform | git (gpuiと同じrev) | プラットフォーム層 (Linuxは `wayland` / `x11`) | pdf_view_app |
 | [image](https://crates.io/crates/image) | 0.25 (デフォルト機能なし) | 画像データの扱い | pdf_viewer |
