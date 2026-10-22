@@ -10,4 +10,6 @@ pub enum PdfError {
     PageOutOfRange { index: usize, count: usize },
     #[error("ズーム倍率が不正です: {0}")]
     InvalidScale(f32),
+    #[error("OCRに失敗しました: {0}")]
+    Ocr(String),
 }

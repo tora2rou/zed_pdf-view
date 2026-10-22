@@ -1,9 +1,24 @@
 //! OCR(Tesseract)の出力を、ページの文字(`PageText`)に変換する。
 
+use std::{
+    io::{ErrorKind, Write as _},
+    process::{Command, Stdio},
+    thread,
+};
+
 use crate::{
+    error::PdfError,
     links::LinkRect,
+    render::RenderedPage,
     text::{Gap, PageText, TextChar},
 };
+
+/// 外部コマンドとして呼ぶTesseractの名前。
+const TESSERACT: &str = "tesseract";
+/// 使いたい言語。入っているものだけを使う。日本語の文書に英単語が混ざるので、両方を渡す。
+const PREFERRED_LANGUAGES: [&str; 2] = ["jpn", "eng"];
+/// 言語を上書きする環境変数(`jpn+eng`のようにTesseractの書式で書く)。
+const LANGUAGE_ENV: &str = "PDF_VIEW_OCR_LANG";
 
 /// TSVの単語の行の`level`。
 const WORD_LEVEL: u32 = 5;
@@ -11,6 +26,96 @@ const WORD_LEVEL: u32 = 5;
 const MIN_CONFIDENCE: f32 = 10.0;
 /// TSVの列の数。最後の列(文字列)に、区切りと同じタブが入ることはない。
 const COLUMNS: usize = 12;
+
+/// OCRする画像の解像度(dpi)の目安。小さい文字は、これくらいないと読めない。
+pub const OCR_DPI: f32 = 300.0;
+
+/// Tesseractに渡す言語。環境変数があればそれ、なければ入っている言語のうち使いたいもの。
+fn language(program: &str) -> Result<String, PdfError> {
+    if let Ok(lang) = std::env::var(LANGUAGE_ENV)
+        && !lang.trim().is_empty()
+    {
+        return Ok(lang.trim().to_string());
+    }
+    let output = Command::new(program)
+        .arg("--list-langs")
+        .output()
+        .map_err(|e| spawn_error(program, &e))?;
+    // 言語の一覧は、バージョンによって標準出力と標準エラー出力のどちらかに出る。
+    let listing = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let languages = pick_languages(&listing);
+    if languages.is_empty() {
+        return Err(PdfError::Ocr(format!(
+            "Tesseractの言語データ({})が入っていません",
+            PREFERRED_LANGUAGES.join(", ")
+        )));
+    }
+    Ok(languages.join("+"))
+}
+
+/// `tesseract --list-langs`の出力から、使いたい言語のうち入っているものを選ぶ。
+fn pick_languages(listing: &str) -> Vec<&'static str> {
+    PREFERRED_LANGUAGES
+        .into_iter()
+        .filter(|wanted| listing.lines().any(|line| line.trim() == *wanted))
+        .collect()
+}
+
+fn spawn_error(program: &str, error: &std::io::Error) -> PdfError {
+    if error.kind() == ErrorKind::NotFound {
+        PdfError::Ocr(format!(
+            "{program}コマンドが見つかりません。Tesseractをインストールしてください"
+        ))
+    } else {
+        PdfError::Ocr(format!("{program}を起動できません: {error}"))
+    }
+}
+
+/// RGBAの画像を、Tesseract(Leptonica)が標準入力から読めるPPM(P6)にする。
+fn encode_ppm(page: &RenderedPage) -> Vec<u8> {
+    let mut out = format!("P6\n{} {}\n255\n", page.width, page.height).into_bytes();
+    out.reserve(page.rgba.len() / 4 * 3);
+    for pixel in page.rgba.chunks_exact(4) {
+        out.extend_from_slice(&pixel[..3]);
+    }
+    out
+}
+
+/// `page`の画像をTesseract(`program`)でOCRして、TSVを返す。
+fn recognize(program: &str, page: &RenderedPage) -> Result<String, PdfError> {
+    let lang = language(program)?;
+    let mut child = Command::new(program)
+        .args(["stdin", "stdout", "-l", &lang, "tsv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| spawn_error(program, &e))?;
+    let mut stdin = child.stdin.take().expect("stdinはpipedにした");
+    let image = encode_ppm(page);
+    // 出力のパイプが詰まって止まらないよう、書き込みは別スレッドで行う。
+    let writer = thread::spawn(move || stdin.write_all(&image));
+    let output = child
+        .wait_with_output()
+        .map_err(|e| PdfError::Ocr(e.to_string()))?;
+    // Tesseractが先に終わったときの書き込み失敗は、終了状態の方で報告する。
+    let _ = writer.join();
+    if !output.status.success() {
+        return Err(PdfError::Ocr(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// `page`(`scale`は画素 / ポイント)をOCRして、ページの文字にする。
+pub fn recognize_page(page: &RenderedPage, scale: f32) -> Result<PageText, PdfError> {
+    Ok(page_text_from_tsv(&recognize(TESSERACT, page)?, scale))
+}
 
 /// Tesseractが出力するTSVから、ページの文字を作る。
 ///
@@ -105,6 +210,44 @@ mod tests {
             .chain(rows.iter().copied())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn page(width: u32, height: u32) -> RenderedPage {
+        RenderedPage {
+            width,
+            height,
+            rgba: vec![10; (width * height * 4) as usize],
+        }
+    }
+
+    #[test]
+    fn ppm_drops_the_alpha_channel() {
+        let mut image = page(2, 1);
+        image.rgba = vec![1, 2, 3, 255, 4, 5, 6, 255];
+        let mut expected = b"P6\n2 1\n255\n".to_vec();
+        expected.extend([1, 2, 3, 4, 5, 6]);
+        assert_eq!(encode_ppm(&image), expected);
+    }
+
+    #[test]
+    fn picks_only_installed_preferred_languages() {
+        let listing = "List of available languages (3):\neng\nfra\njpn\n";
+        assert_eq!(pick_languages(listing), ["jpn", "eng"]);
+        assert_eq!(
+            pick_languages("List of available languages (1):\nfra\n"),
+            [] as [&str; 0]
+        );
+        // "jpn_vert"のような別の言語データを、jpnと取り違えない。
+        assert_eq!(pick_languages("jpn_vert\n"), [] as [&str; 0]);
+    }
+
+    #[test]
+    fn a_missing_tesseract_is_reported_clearly() {
+        let error = recognize("pdf-view-no-such-command", &page(1, 1)).unwrap_err();
+        assert!(
+            matches!(&error, PdfError::Ocr(m) if m.contains("見つかりません")),
+            "{error}"
+        );
     }
 
     #[test]
