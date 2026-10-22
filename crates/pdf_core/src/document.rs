@@ -107,7 +107,7 @@ impl PdfDocument {
                 bg_color: WHITE,
             },
         );
-        Ok(RenderedPage::from_pixmap(&pixmap))
+        Ok(RenderedPage::from_pixmap(pixmap))
     }
 
     /// ページ`index`のリンク。初回だけ読み込む。
