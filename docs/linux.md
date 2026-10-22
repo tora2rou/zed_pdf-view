@@ -30,6 +30,9 @@ sudo apt install ./dist/chihayaburu_*.deb
 
 アンインストール: `sudo apt remove chihayaburu`
 
+ビルド済みの `.deb`(Ubuntu 24.04向け)は、GitHub Actionsが `linux-packaging` ブランチのpushと `v*` タグのたびに作る。
+[Releases](https://github.com/tora2rou/zed_pdf-view/releases)(タグのとき)、または Actions の実行結果のアーティファクトからダウンロードできる。
+
 **注意**: `.deb` の依存関係(特に `libc6 (>= ...)`)は、ビルドしたマシンのライブラリから自動で決まる。Ubuntu 24.04 で作ったものは Debian 12 や Ubuntu 22.04 には入らない。古いディストリビューションに入れたいときは、そのディストリビューション(コンテナでもよい)の上でビルドする。
 
 ## Arch / Manjaro(PKGBUILD)
