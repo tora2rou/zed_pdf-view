@@ -12,10 +12,7 @@ use crate::{
         FirstPage, KEY_CONTEXT, LastPage, NextPage, PreviousPage, ResetZoom, RotateClockwise,
         RotateCounterclockwise, ToggleDarkMode, ToggleFullscreen, ZoomIn, ZoomOut,
     },
-    images::{
-        ImageKey, Lookup, PageImages, RenderMode, render_page_image, settle_remaining,
-        with_prefetch,
-    },
+    images::{ImageKey, Lookup, PageImages, render_page_image, settle_remaining, with_prefetch},
     layout::{self, Layout},
     outline_rows::OutlinePath,
     page_input::PageInput,
@@ -59,7 +56,6 @@ pub(crate) struct RenderRequest {
     pub key: ImageKey,
     pub scale: f32,
     pub target: RenderTarget,
-    pub mode: RenderMode,
 }
 
 /// ドラッグでスクロール中の状態。開始時のマウス位置とスクロール位置を覚えておく。
@@ -441,15 +437,14 @@ impl PdfView {
             key,
             scale,
             target,
-            mode,
         } = request;
         let document = self.document.clone();
         let appearance = self.appearance;
         cx.spawn_in(window, async move |this, cx| {
             let result = cx
-                .background_spawn(async move {
-                    render_page_image(&document, index, scale, appearance, mode)
-                })
+                .background_spawn(
+                    async move { render_page_image(&document, index, scale, appearance) },
+                )
                 .await;
             this.update_in(cx, |this, window, cx| {
                 let images = match target {
@@ -579,7 +574,6 @@ impl PdfView {
                     key,
                     scale,
                     target: RenderTarget::Page,
-                    mode: RenderMode::Cached,
                 };
                 self.spawn_render(request, window, cx);
             }

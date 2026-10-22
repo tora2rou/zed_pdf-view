@@ -141,28 +141,15 @@ impl PageImages {
     }
 }
 
-/// 画像を作るときに、文書の描画キャッシュを使うか。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RenderMode {
-    /// 本文用。文書のLRUキャッシュに載せる(回転や反転の切り替えで再利用できる)。
-    Cached,
-    /// サムネイル用。大量に作るので、本文用のキャッシュを押し出さないよう載せない。
-    Uncached,
-}
-
 /// ページ`index`を描画して、GPUに載せられる画像にする。重いのでバックグラウンドで呼ぶ。
 pub fn render_page_image(
     document: &PdfDocument,
     index: usize,
     scale: f32,
     appearance: Appearance,
-    mode: RenderMode,
 ) -> Result<Arc<RenderImage>, PdfError> {
-    let rendered = match mode {
-        RenderMode::Cached => document.render_page(index, scale)?,
-        RenderMode::Uncached => Arc::new(document.render_page_uncached(index, scale)?),
-    };
-    to_render_image(&transform(&rendered, appearance))
+    let rendered = document.render_page(index, scale)?;
+    to_render_image(transform(rendered, appearance))
         .ok_or_else(|| PdfError::Load("画像データのサイズが不正です".into()))
 }
 
@@ -202,7 +189,7 @@ mod tests {
             height: 1,
             rgba: vec![0; 4],
         };
-        to_render_image(&page).unwrap()
+        to_render_image(page).unwrap()
     }
 
     fn appearance(rotation: Rotation) -> Appearance {
