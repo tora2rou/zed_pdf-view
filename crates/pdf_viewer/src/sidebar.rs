@@ -6,7 +6,7 @@ use gpui::{
 
 use crate::{
     actions::ToggleSidebar,
-    images::{Lookup, RenderMode, with_margin},
+    images::{Lookup, with_margin},
     layout::{self, MARGIN},
     outline_rows::{self, OutlineRow},
     view::{PdfView, RenderRequest, RenderTarget},
@@ -211,7 +211,6 @@ impl PdfView {
                     key,
                     scale,
                     target: RenderTarget::Thumbnail,
-                    mode: RenderMode::Uncached,
                 };
                 self.spawn_render(request, window, cx);
             }

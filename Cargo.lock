@@ -3011,15 +3011,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lru"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a9f71e3591c7ec44d3e563e87bf14ddc2bada8519dca046e5b0e560cd004e2d"
-dependencies = [
- "hashbrown 0.17.1",
-]
-
-[[package]]
 name = "lyon"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3888,7 +3879,6 @@ name = "pdf_core"
 version = "0.1.0"
 dependencies = [
  "hayro",
- "lru",
  "thiserror 2.0.21",
 ]
 

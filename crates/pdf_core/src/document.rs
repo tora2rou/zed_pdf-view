@@ -1,9 +1,8 @@
 use std::{
     collections::HashMap,
     fs,
-    num::NonZeroUsize,
     path::Path,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, OnceLock},
 };
 
 use hayro::{
@@ -12,22 +11,14 @@ use hayro::{
     hayro_syntax::{Pdf, object::ObjectIdentifier, page::Page},
     vello_cpu::color::palette::css::WHITE,
 };
-use lru::LruCache;
 
 use crate::{
     Link, OutlineItem, PageText, PdfError, RenderedPage, dest::page_index_by_id, links::read_links,
     outline::read_outline, text::extract_text,
 };
 
-/// キャッシュするページ画像の既定の最大枚数。
-const DEFAULT_CACHE_CAPACITY: usize = 16;
-
-/// (ページ番号, 倍率のf32ビット列)。f32はHashできないのでビット列で代用する。
-type CacheKey = (usize, u32);
-
 pub struct PdfDocument {
     pdf: Pdf,
-    cache: Mutex<LruCache<CacheKey, Arc<RenderedPage>>>,
     /// 目次。初めて必要になったときに読む。
     outline: OnceLock<Vec<OutlineItem>>,
     /// ページオブジェクトの識別子 → ページ番号。目次やリンクの宛先の解決に使う。
@@ -43,10 +34,8 @@ impl PdfDocument {
         let bytes = fs::read(path)?;
         let pdf = Pdf::new(Arc::new(bytes)).map_err(|e| PdfError::Load(format!("{e:?}")))?;
         let page_count = pdf.pages().len();
-        let capacity = NonZeroUsize::new(DEFAULT_CACHE_CAPACITY).unwrap();
         Ok(Self {
             pdf,
-            cache: Mutex::new(LruCache::new(capacity)),
             outline: OnceLock::new(),
             page_ids: OnceLock::new(),
             links: (0..page_count).map(|_| OnceLock::new()).collect(),
@@ -69,26 +58,9 @@ impl PdfDocument {
         Ok(self.page(index)?.render_dimensions())
     }
 
-    /// キャッシュに載せる最大枚数を変更する。超過分は古いものから捨てる。
-    pub fn set_cache_capacity(&self, capacity: NonZeroUsize) {
-        self.cache.lock().unwrap().resize(capacity);
-    }
-
-    /// ページを`scale`倍(1.0 = 72dpi)でRGBAにラスタライズする。同じ(ページ, 倍率)はキャッシュから返す。
-    pub fn render_page(&self, index: usize, scale: f32) -> Result<Arc<RenderedPage>, PdfError> {
-        let key = (index, scale.to_bits());
-        if let Some(hit) = self.cache.lock().unwrap().get(&key) {
-            return Ok(hit.clone());
-        }
-        // 描画は時間がかかるのでロックを外して行う。
-        let rendered = Arc::new(self.rasterize(index, scale)?);
-        self.cache.lock().unwrap().put(key, rendered.clone());
-        Ok(rendered)
-    }
-
-    /// キャッシュを使わずに描画する。サムネイルのように大量に作る画像で、
-    /// 本文用のキャッシュを押し出さないために使う。
-    pub fn render_page_uncached(&self, index: usize, scale: f32) -> Result<RenderedPage, PdfError> {
+    /// ページを`scale`倍(1.0 = 72dpi)でRGBAにラスタライズする。
+    /// 結果は保持しない(画像は呼び出し側が持つので、ここで持つとメモリが二重になる)。
+    pub fn render_page(&self, index: usize, scale: f32) -> Result<RenderedPage, PdfError> {
         self.rasterize(index, scale)
     }
 
