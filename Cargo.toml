@@ -10,6 +10,7 @@ license = "Apache-2.0"
 [workspace.dependencies]
 pdf_core = { path = "crates/pdf_core" }
 pdf_viewer = { path = "crates/pdf_viewer" }
+typst_build = { path = "crates/typst_build" }
 hayro = "0.8"
 thiserror = "2"
 memmap2 = "0.9"

@@ -4628,6 +4628,7 @@ dependencies = [
  "log",
  "pdf_core",
  "pdf_viewer",
+ "typst_build",
 ]
 
 [[package]]
