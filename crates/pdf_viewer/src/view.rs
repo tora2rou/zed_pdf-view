@@ -1,4 +1,9 @@
-use std::{collections::HashSet, ops::Range, sync::Arc, time::Instant};
+use std::{
+    collections::HashSet,
+    ops::Range,
+    sync::{Arc, atomic::AtomicBool},
+    time::Instant,
+};
 
 use gpui::{
     App, AppContext as _, Context, CursorStyle, Div, FocusHandle, Focusable, MouseButton,
@@ -119,6 +124,10 @@ pub struct PdfView {
     pub(crate) notice_task: Option<Task<()>>,
     /// OCRを実行中か。重い処理なので、同時に1つだけ走らせる。
     pub(crate) ocr_running: bool,
+    /// 実行中のOCRを中断するための印。
+    pub(crate) ocr_cancel: Arc<AtomicBool>,
+    /// OCRの範囲を選ぶメニューを開いているか。
+    pub(crate) ocr_menu_open: bool,
     /// ページ番号入力欄の編集状態。`Some`の間は入力欄がフォーカスを持つ。
     pub(crate) page_input: Option<PageInput>,
     pub(crate) input_focus: FocusHandle,
@@ -165,6 +174,8 @@ impl PdfView {
             notice: None,
             notice_task: None,
             ocr_running: false,
+            ocr_cancel: Arc::new(AtomicBool::new(false)),
+            ocr_menu_open: false,
             page_input: None,
             input_focus: cx.focus_handle(),
         }
@@ -744,6 +755,8 @@ impl Render for PdfView {
             .on_action(cx.listener(Self::hand_tool))
             .on_action(cx.listener(Self::select_tool))
             .on_action(cx.listener(Self::run_ocr))
+            .on_action(cx.listener(Self::run_ocr_all_pages))
+            .on_action(cx.listener(Self::cancel_ocr))
             .relative()
             .flex()
             .flex_col()

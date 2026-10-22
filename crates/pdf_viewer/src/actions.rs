@@ -22,6 +22,10 @@ actions!(
         SelectTool,
         /// 表示中のページをOCRして、文字を選択・コピーできるようにする。
         RunOcr,
+        /// 全ページをOCRする。
+        RunOcrAllPages,
+        /// 実行中のOCRを中断する。
+        CancelOcr,
     ]
 );
 
@@ -59,5 +63,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("v", SelectTool, ctx),
         KeyBinding::new("ctrl-shift-r", RunOcr, ctx),
         KeyBinding::new("cmd-shift-r", RunOcr, ctx),
+        KeyBinding::new("ctrl-alt-r", RunOcrAllPages, ctx),
+        KeyBinding::new("cmd-alt-r", RunOcrAllPages, ctx),
     ]);
 }

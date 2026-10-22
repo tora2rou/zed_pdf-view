@@ -22,9 +22,9 @@ mod view;
 mod zoom;
 
 pub use actions::{
-    FirstPage, KEY_CONTEXT, LastPage, NextPage, PreviousPage, ResetZoom, RotateClockwise,
-    RotateCounterclockwise, RunOcr, ToggleDarkMode, ToggleFullscreen, ToggleSidebar, ZoomIn,
-    ZoomOut, init,
+    CancelOcr, FirstPage, KEY_CONTEXT, LastPage, NextPage, PreviousPage, ResetZoom,
+    RotateClockwise, RotateCounterclockwise, RunOcr, RunOcrAllPages, ToggleDarkMode,
+    ToggleFullscreen, ToggleSidebar, ZoomIn, ZoomOut, init,
 };
 pub use convert::to_render_image;
 pub use view::PdfView;
