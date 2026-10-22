@@ -25,7 +25,11 @@ const INPUT_BACKGROUND: u32 = 0x1a1a1a;
 const BORDER: u32 = 0x555555;
 const FOCUS_BORDER: u32 = 0x4d9bff;
 
-fn button(id: &'static str, label: impl Into<SharedString>, active: bool) -> Stateful<gpui::Div> {
+pub(crate) fn button(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    active: bool,
+) -> Stateful<gpui::Div> {
     div()
         .id(id)
         .h(px(24.0))
@@ -143,6 +147,7 @@ impl PdfView {
                 )),
             )
             .child(div().w(px(16.0)))
+            .child(self.render_ocr_button(cx))
             .child(button("rotate", "Rotate", false).on_click(cx.listener(
                 |this, _: &ClickEvent, window, cx| {
                     this.rotate_clockwise(&RotateClockwise, window, cx)

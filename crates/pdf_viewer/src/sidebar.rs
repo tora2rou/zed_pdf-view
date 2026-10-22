@@ -1,7 +1,8 @@
 //! 左側のサイドバー(ページのサムネイル一覧と目次)。
 
 use gpui::{
-    ClickEvent, Context, IntoElement, Stateful, Window, div, img, point, prelude::*, px, rgb,
+    ClickEvent, Context, IntoElement, ScrollHandle, Stateful, Window, div, img, point, prelude::*,
+    px, rgb,
 };
 
 use crate::{
@@ -9,6 +10,7 @@ use crate::{
     images::{Lookup, with_margin},
     layout::{self, MARGIN},
     outline_rows::{self, OutlineRow},
+    scrollbar::vertical_scrollbar,
     view::{PdfView, RenderRequest, RenderTarget},
 };
 
@@ -20,6 +22,8 @@ const LABEL_HEIGHT: f32 = 20.0;
 const TAB_HEIGHT: f32 = 30.0;
 /// 目次の1行の高さ。開閉ボタンを押しやすいよう、少し高めにしてある。
 const OUTLINE_ROW_HEIGHT: f32 = 30.0;
+/// 目次の一覧の上下の余白。
+const OUTLINE_LIST_PADDING: f32 = 4.0;
 /// 開閉ボタン(`+` / `−`)の当たり判定の幅。行の高さいっぱいに広げた領域を押せる。
 const OUTLINE_TOGGLE_WIDTH: f32 = 34.0;
 /// 行の左端の余白。
@@ -261,12 +265,36 @@ impl PdfView {
             );
         }
 
+        let scrollbar =
+            self.sidebar_scrollbar("thumbnail-scrollbar", &self.thumb_scroll, layout.height, cx);
         div()
-            .id("thumbnail-list")
+            .relative()
             .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.thumb_scroll)
-            .child(content)
+            .child(
+                div()
+                    .id("thumbnail-list")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.thumb_scroll)
+                    .child(content),
+            )
+            .children(scrollbar)
+    }
+
+    /// サイドバーの一覧に重ねるスクロールバー。`content`は一覧全体の高さ。
+    fn sidebar_scrollbar(
+        &self,
+        id: &'static str,
+        handle: &ScrollHandle,
+        content: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
+        let view = cx.entity();
+        let target = handle.clone();
+        vertical_scrollbar(id, handle, content, move |y, _, cx| {
+            target.set_offset(point(px(0.0), px(-y)));
+            view.update(cx, |_, cx| cx.notify());
+        })
     }
 
     /// 目次。項目をクリックするとそのページへ移動し、左の`+`/`−`で子の開閉をする。
@@ -278,17 +306,27 @@ impl PdfView {
             .overflow_y_scroll()
             .track_scroll(&self.outline_scroll);
         if rows.is_empty() {
-            return list
-                .p(px(12.0))
-                .text_sm()
-                .text_color(rgb(MUTED_TEXT))
-                .child("No outline in this document");
+            return div().size_full().child(
+                list.p(px(12.0))
+                    .text_sm()
+                    .text_color(rgb(MUTED_TEXT))
+                    .child("No outline in this document"),
+            );
         }
-        list.py(px(4.0)).text_sm().children(
-            rows.into_iter()
-                .enumerate()
-                .map(|(index, row)| self.render_outline_row(index, row, cx)),
-        )
+        let content = rows.len() as f32 * OUTLINE_ROW_HEIGHT + OUTLINE_LIST_PADDING * 2.0;
+        let scrollbar =
+            self.sidebar_scrollbar("outline-scrollbar", &self.outline_scroll, content, cx);
+        div()
+            .relative()
+            .size_full()
+            .child(
+                list.py(px(OUTLINE_LIST_PADDING)).text_sm().children(
+                    rows.into_iter()
+                        .enumerate()
+                        .map(|(index, row)| self.render_outline_row(index, row, cx)),
+                ),
+            )
+            .children(scrollbar)
     }
 
     fn render_outline_row(
