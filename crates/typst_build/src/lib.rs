@@ -286,4 +286,41 @@ mod tests {
             Path::new("/a/b/doc.pdf")
         );
     }
+
+    fn sample(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../samples/typst")
+            .join(name)
+    }
+
+    /// サンプルは、実際にコンパイルできる(壊れていると、試すときに困る)。
+    #[test]
+    fn the_samples_compile() {
+        for name in ["basic.typ", "long.typ", "with-import/main.typ"] {
+            let result = compile_file(&sample(name));
+            assert!(
+                result.is_ok(),
+                "{name}: {:?}",
+                result.err().map(|f| f.errors)
+            );
+        }
+    }
+
+    /// 評価エラーのサンプルは、最初の1件(11行目)だけが、位置つきで返る。
+    #[test]
+    fn the_broken_sample_reports_its_first_error() {
+        let failure = compile_file(&sample("broken.typ")).unwrap_err();
+        assert_eq!(failure.errors.len(), 1, "{:?}", failure.errors);
+        assert_eq!(failure.errors[0].line, Some(11));
+        assert!(failure.errors[0].message.contains("cannot add"));
+    }
+
+    /// 構文エラーのサンプルは、複数のエラーと、ヒントを返す。
+    #[test]
+    fn the_syntax_sample_reports_several_errors_with_hints() {
+        let failure = compile_file(&sample("broken-syntax.typ")).unwrap_err();
+        assert!(failure.errors.len() >= 3, "{:?}", failure.errors);
+        assert!(failure.errors.iter().all(|e| e.line.is_some()));
+        assert!(failure.errors.iter().any(|e| !e.hints.is_empty()));
+    }
 }
