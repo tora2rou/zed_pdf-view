@@ -55,6 +55,8 @@ where
     let top = f32::from(bounds.origin.y);
     let thumb = thumb(viewport, viewport, content, offset)?;
 
+    // ホバーの色替えが他のバーに及ばないよう、バーごとの名前にする。
+    let group = SharedString::from(format!("{id}-thumb"));
     let on_scroll = Rc::new(on_scroll);
     let grab = Rc::new(Cell::new(0.0));
     let drag = ThumbDrag {
@@ -100,21 +102,31 @@ where
                     .bg(rgba(TRACK_COLOR)),
             )
             .child(
+                // つまみの当たり判定。トラックと同じ幅に広げ、見た目のつまみは右端に寄せる。
                 div()
                     .id((id, 1usize))
+                    .group(group.clone())
                     .absolute()
-                    .left(px(HIT_WIDTH - WIDTH + 2.0))
-                    .right(px(2.0))
+                    .left_0()
+                    .right_0()
                     .top(px(thumb.top))
                     .h(px(thumb.len))
-                    .rounded_full()
-                    .bg(rgba(THUMB_COLOR))
-                    .hover(|s| s.bg(rgba(THUMB_HOVER_COLOR)))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_drag(drag, move |drag, cursor_offset, _, cx| {
                         drag.grab.set(f32::from(cursor_offset.y));
                         cx.new(|_| NoGhost)
-                    }),
+                    })
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left(px(HIT_WIDTH - WIDTH + 2.0))
+                            .right(px(2.0))
+                            .rounded_full()
+                            .bg(rgba(THUMB_COLOR))
+                            .group_hover(group, |s| s.bg(rgba(THUMB_HOVER_COLOR))),
+                    ),
             ),
     )
 }
