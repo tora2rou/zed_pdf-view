@@ -53,6 +53,8 @@ impl Diagnostic {
 pub struct Compiled {
     pub pdf: Vec<u8>,
     pub warnings: Vec<Diagnostic>,
+    /// 読み込んだプロジェクト内のファイル。これらが書き換わったら、コンパイルし直す。
+    pub dependencies: Vec<PathBuf>,
 }
 
 /// コンパイルに失敗した結果。
@@ -60,11 +62,13 @@ pub struct Compiled {
 pub struct Failure {
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
+    /// 読み込んだプロジェクト内のファイル。直したら、コンパイルし直す。
+    pub dependencies: Vec<PathBuf>,
 }
 
 /// `path`のTypst文書をPDFにコンパイルする。プロジェクトのルートは`path`のあるフォルダ。
 pub fn compile_file(path: &Path) -> Result<Compiled, Failure> {
-    let world = FileWorld::new(path).map_err(|message| Failure {
+    let mut world = FileWorld::new(path).map_err(|message| Failure {
         errors: vec![Diagnostic {
             severity: Level::Error,
             message,
@@ -74,15 +78,21 @@ pub fn compile_file(path: &Path) -> Result<Compiled, Failure> {
             hints: Vec::new(),
         }],
         warnings: Vec::new(),
+        dependencies: vec![path.to_path_buf()],
     })?;
     let typst::diag::Warned { output, warnings } = typst::compile::<PagedDocument>(&world);
     let warnings = diagnostics(&world, &warnings);
     let result = output.and_then(|document| typst_pdf::pdf(&document, &PdfOptions::default()));
     match result {
-        Ok(pdf) => Ok(Compiled { pdf, warnings }),
+        Ok(pdf) => Ok(Compiled {
+            pdf,
+            warnings,
+            dependencies: world.dependencies(),
+        }),
         Err(errors) => Err(Failure {
             errors: diagnostics(&world, &errors),
             warnings,
+            dependencies: world.dependencies(),
         }),
     }
 }
@@ -222,6 +232,34 @@ mod tests {
             "{:?}",
             failure.errors
         );
+    }
+
+    /// 読み込んだファイルが依存として返る(メインを含み、読み込んでいないファイルは含まない)。
+    #[test]
+    fn dependencies_list_the_files_that_were_read() {
+        let dir = project(
+            "deps",
+            &[
+                ("main.typ", "#import \"lib.typ\": f\n#f()"),
+                ("lib.typ", "#let f() = [x]"),
+                ("unused.typ", "= not used"),
+            ],
+        );
+        let compiled = compile_file(&dir.join("main.typ")).unwrap();
+        let names: Vec<_> = compiled
+            .dependencies
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["lib.typ", "main.typ"]);
+    }
+
+    /// 失敗したときも依存が返る(直したらコンパイルし直せるように)。
+    #[test]
+    fn a_failed_compile_still_reports_its_dependencies() {
+        let dir = project("deps_fail", &[("main.typ", "#unknown()")]);
+        let failure = compile_file(&dir.join("main.typ")).unwrap_err();
+        assert_eq!(failure.dependencies.len(), 1);
     }
 
     #[test]

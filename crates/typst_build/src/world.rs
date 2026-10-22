@@ -70,6 +70,21 @@ impl FileWorld {
         })
     }
 
+    /// コンパイル中に読み込んだ、プロジェクト内のファイル(読めなかったものも含む)。メインのファイルは
+    /// 必ず入る。パッケージのファイルは含まない。
+    pub fn dependencies(&mut self) -> Vec<PathBuf> {
+        let main = self.main;
+        let (loader, ids) = self.files.dependencies();
+        let mut paths: Vec<PathBuf> = ids
+            .chain([main])
+            .filter(|id| matches!(id.root(), VirtualRoot::Project))
+            .filter_map(|id| loader.resolve(id).ok())
+            .collect();
+        paths.sort();
+        paths.dedup();
+        paths
+    }
+
     /// 診断の表示用のファイル名。プロジェクト内のファイルはルートからの相対パス。
     pub fn display_name(&self, id: FileId) -> String {
         match self.files.loader().resolve(id) {
