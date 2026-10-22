@@ -255,7 +255,7 @@ mod tests {
         });
         cx.executor().allow_parking();
 
-        let mut settle = |cx: &mut gpui::VisualTestContext| {
+        let settle = |cx: &mut gpui::VisualTestContext| {
             for _ in 0..4 {
                 cx.executor().advance_clock(POLL_INTERVAL * 2);
                 cx.run_until_parked();
