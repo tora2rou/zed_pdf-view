@@ -10,8 +10,10 @@ use gpui::{
 
 use crate::scrollbar_math::{offset_at, offset_for_thumb_top, thumb};
 
-/// バー(トラック)の幅。
+/// バーの見た目の幅。
 const WIDTH: f32 = 10.0;
+/// クリックを受ける幅。見た目のバーの左側に広げてあり、掴み・押しやすくしてある。
+const HIT_WIDTH: f32 = 20.0;
 const TRACK_COLOR: u32 = 0xffffff10;
 const THUMB_COLOR: u32 = 0x888888cc;
 const THUMB_HOVER_COLOR: u32 = 0xaaaaaaee;
@@ -69,8 +71,7 @@ where
             .top_0()
             .right_0()
             .bottom_0()
-            .w(px(WIDTH))
-            .bg(rgba(TRACK_COLOR))
+            .w(px(HIT_WIDTH))
             // トラックのクリックで、その位置へ飛ぶ。つまみの上のクリックはつまみが受ける。
             .on_mouse_down(
                 MouseButton::Left,
@@ -91,9 +92,18 @@ where
             })
             .child(
                 div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .bottom_0()
+                    .w(px(WIDTH))
+                    .bg(rgba(TRACK_COLOR)),
+            )
+            .child(
+                div()
                     .id((id, 1usize))
                     .absolute()
-                    .left(px(2.0))
+                    .left(px(HIT_WIDTH - WIDTH + 2.0))
                     .right(px(2.0))
                     .top(px(thumb.top))
                     .h(px(thumb.len))

@@ -1,7 +1,8 @@
 //! 開いているPDFのタブバー(切り替えと閉じる操作)。
 
 use gpui::{
-    ClickEvent, Context, Focusable as _, IntoElement, MouseButton, Window, div, prelude::*, px, rgb,
+    ClickEvent, Context, Focusable as _, IntoElement, MouseButton, SharedString, Window, div,
+    prelude::*, px, rgb,
 };
 
 use crate::app_window::{APP_TITLE, AppWindow, CloseTab, NextTab, PreviousTab, file_name};
@@ -14,6 +15,8 @@ const HOVER: u32 = 0x2f2f2f;
 const TEXT: u32 = 0xdddddd;
 const MUTED_TEXT: u32 = 0x999999;
 const CLOSE_HOVER: u32 = 0x555555;
+/// ×ボタンの当たり判定を、見た目より左へ広げる幅。
+const CLOSE_HIT_EXTRA: f32 = 14.0;
 const TAB_MAX_WIDTH: f32 = 200.0;
 
 impl AppWindow {
@@ -94,23 +97,33 @@ impl AppWindow {
         }
         let tabs = self.tabs.iter().enumerate().map(|(index, tab)| {
             let active = index == self.active;
+            let group = SharedString::from(format!("tab-close-{index}"));
+            // 見た目の×より左に広げた領域で押せる。
             let close = div()
                 .id(("tab-close", index))
+                .group(group.clone())
                 .flex_none()
-                .size(px(18.0))
+                .h_full()
+                .pl(px(CLOSE_HIT_EXTRA))
                 .flex()
                 .items_center()
-                .justify_center()
-                .rounded_sm()
-                .text_color(rgb(MUTED_TEXT))
-                .hover(|d| d.bg(rgb(CLOSE_HOVER)).text_color(rgb(TEXT)))
                 // 閉じるボタンの押下が、タブの切り替えにならないようにする。
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.close_tab(index, window, cx);
                     cx.stop_propagation();
                 }))
-                .child("×");
+                .child(
+                    div()
+                        .size(px(18.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_sm()
+                        .text_color(rgb(MUTED_TEXT))
+                        .group_hover(group, |d| d.bg(rgb(CLOSE_HOVER)).text_color(rgb(TEXT)))
+                        .child("×"),
+                );
             div()
                 .id(("tab", index))
                 .flex()
