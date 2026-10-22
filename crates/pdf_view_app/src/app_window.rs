@@ -257,7 +257,7 @@ impl AppWindow {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Open PDF, Typst or LaTeX".into()),
+            prompt: Some("Open PDF, EPUB, Typst or LaTeX".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             match selected.await {

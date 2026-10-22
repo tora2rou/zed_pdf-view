@@ -1,4 +1,4 @@
-//! Typst(`.typ`)・LaTeX(`.tex`)の文書を開くタブ。コンパイルしたPDFを表示し、エラーを下に出す。
+//! Typst(`.typ`)・LaTeX(`.tex`)・EPUB(`.epub`)の文書を開くタブ。コンパイルしたPDFを表示し、エラーを下に出す。
 
 use std::{
     fs,
@@ -38,21 +38,25 @@ pub struct SourceTab {
 pub enum Kind {
     Typst,
     Latex,
+    /// EPUB。Typstに変換して組版する。
+    Epub,
 }
 
-/// `path`の拡張子から、文書の種類を決める。`.typ`はTypst、`.tex`はLaTeX。それ以外は`None`。
+/// `path`の拡張子から、文書の種類を決める。`.typ`はTypst、`.tex`はLaTeX、`.epub`はEPUB。それ以外は`None`。
 pub fn kind_of(path: &Path) -> Option<Kind> {
     let ext = path.extension()?;
     if ext.eq_ignore_ascii_case("typ") {
         Some(Kind::Typst)
     } else if ext.eq_ignore_ascii_case("tex") {
         Some(Kind::Latex)
+    } else if ext.eq_ignore_ascii_case("epub") {
+        Some(Kind::Epub)
     } else {
         None
     }
 }
 
-/// コンパイルして開く文書(`.typ`・`.tex`)か。
+/// コンパイルして開く文書(`.typ`・`.tex`・`.epub`)か。
 pub fn is_source(path: &Path) -> bool {
     kind_of(path).is_some()
 }
@@ -80,30 +84,28 @@ struct Failed {
     dependencies: Vec<PathBuf>,
 }
 
+/// 各コンパイラの結果(同じ形の別の型)を、共通の形にする。
+macro_rules! unify {
+    ($result:expr) => {
+        $result
+            .map(|c| Compiled {
+                pdf: c.pdf,
+                warnings: c.warnings,
+                dependencies: c.dependencies,
+            })
+            .map_err(|f| Failed {
+                errors: f.errors,
+                warnings: f.warnings,
+                dependencies: f.dependencies,
+            })
+    };
+}
+
 fn compile(source: &Path) -> Result<Compiled, Failed> {
     match kind_of(source) {
-        Some(Kind::Latex) => latex_build::compile_file(source)
-            .map(|c| Compiled {
-                pdf: c.pdf,
-                warnings: c.warnings,
-                dependencies: c.dependencies,
-            })
-            .map_err(|f| Failed {
-                errors: f.errors,
-                warnings: f.warnings,
-                dependencies: f.dependencies,
-            }),
-        _ => typst_build::compile_file(source)
-            .map(|c| Compiled {
-                pdf: c.pdf,
-                warnings: c.warnings,
-                dependencies: c.dependencies,
-            })
-            .map_err(|f| Failed {
-                errors: f.errors,
-                warnings: f.warnings,
-                dependencies: f.dependencies,
-            }),
+        Some(Kind::Latex) => unify!(latex_build::compile_file(source)),
+        Some(Kind::Epub) => unify!(epub_build::compile_file(source)),
+        _ => unify!(typst_build::compile_file(source)),
     }
 }
 
@@ -357,6 +359,7 @@ mod tests {
         assert_eq!(kind_of(Path::new("DOC.TYP")), Some(Kind::Typst));
         assert_eq!(kind_of(Path::new("a/doc.tex")), Some(Kind::Latex));
         assert_eq!(kind_of(Path::new("DOC.TEX")), Some(Kind::Latex));
+        assert_eq!(kind_of(Path::new("book.epub")), Some(Kind::Epub));
         assert_eq!(kind_of(Path::new("doc.pdf")), None);
         assert_eq!(kind_of(Path::new("typ")), None);
         assert!(is_source(Path::new("x.tex")) && !is_source(Path::new("x.txt")));
@@ -537,5 +540,22 @@ mod tests {
             }
         }
         assert_eq!(pages(&view, cx), 2);
+    }
+
+    /// `.epub`を開くと、変換・組版したPDFがタブに表示される。しおり(目次)も付く。
+    #[gpui::test]
+    fn opening_an_epub_shows_the_typeset_book(cx: &mut TestAppContext) {
+        let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/epub/sample.epub");
+        let (view, cx) = open(&sample, cx);
+        assert_eq!(view.read_with(cx, |this, _| this.tabs.len()), 1);
+        assert!(pages(&view, cx) >= 3);
+        assert_eq!(errors(&view, cx), 0);
+        let outline = view.read_with(cx, |this, cx| {
+            this.tabs[0].viewer.read(cx).document().outline().len()
+        });
+        assert!(
+            outline >= 3,
+            "headings should become outline entries: {outline}"
+        );
     }
 }

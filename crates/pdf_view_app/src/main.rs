@@ -17,7 +17,7 @@ use pdf_core::PdfDocument;
 
 use app_window::AppWindow;
 
-const USAGE: &str = "使い方: pdf_view_app [file.pdf | file.typ | file.tex]";
+const USAGE: &str = "使い方: pdf_view_app [file.pdf | file.epub | file.typ | file.tex]";
 
 /// コマンドライン引数(プログラム名を除く)から、開くPDFのパスを取り出す。
 /// 引数がなければ`None`(PDFを開かずに起動する)。

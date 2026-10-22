@@ -15,6 +15,7 @@ pdf_core.workspace = true
 pdf_viewer.workspace = true
 typst_build.workspace = true
 latex_build.workspace = true
+epub_build.workspace = true
 build_diag.workspace = true
 log.workspace = true
 

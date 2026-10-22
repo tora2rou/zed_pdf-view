@@ -77,14 +77,13 @@ fn preamble(package: &Package) -> String {
     out.push_str("#set heading(numbering: none)\n");
     out.push_str("#show heading: set block(above: 1.6em, below: 0.9em)\n");
     out.push_str("#show link: set text(fill: rgb(\"#1a5fb4\"))\n");
-    // ページより大きい画像は、ページに収まるように縮める。小さい画像はそのまま。
+    // ページより大きい画像は、縦横の比を保ったまま、ページに収まるように縮める。小さい画像は、そのまま。
+    // (`fit: "contain"`で枠いっぱいにすると、枠の分だけ上下に余白が空くので、幅だけを指定する)
     out.push_str(
         "#let epub-image(path) = layout(size => {\n  \
-         let img = image(path)\n  \
-         let m = measure(img)\n  \
-         if m.width > size.width or m.height > size.height * 0.9 {\n    \
-         align(center, image(path, width: size.width, height: size.height * 0.9, fit: \"contain\"))\n  \
-         } else { img }\n})\n\n",
+         let m = measure(image(path))\n  \
+         let scale = calc.min(1.0, size.width / m.width, size.height * 0.85 / m.height)\n  \
+         image(path, width: m.width * scale)\n})\n\n",
     );
     out
 }
@@ -448,5 +447,26 @@ mod tests {
         let failure = compile_file(&path).unwrap_err();
         assert!(failure.errors[0].message.contains("ZIP"));
         assert!(compile_file(Path::new("/nonexistent/x.epub")).is_err());
+    }
+
+    /// 同梱のサンプルのEPUBが、実際に組版できる(3章 → 3ページ以上になる)。
+    #[test]
+    fn the_sample_epub_compiles() {
+        let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/epub/sample.epub");
+        let compiled = compile_file(&sample).expect("sample should compile");
+        assert!(compiled.pdf.starts_with(b"%PDF-"));
+        assert!(compiled.warnings.is_empty(), "{:?}", compiled.warnings);
+    }
+
+    /// 大きな画像でも、画像のあとの段落が、同じページに続く(画像の上下に余白が空かない)。
+    #[test]
+    fn an_oversized_image_does_not_push_the_next_paragraph_away() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="3000" height="1500"><rect width="3000" height="1500" fill="blue"/></svg>"#;
+        let body = "<p>before</p><p><img src=\"wide.svg\"/></p><p>after</p>";
+        let path = write_epub("wide", &[("c1.xhtml", body)], &[("wide.svg", svg)]);
+        let compiled = compile_file(&path).unwrap();
+        let text = String::from_utf8_lossy(&compiled.pdf).into_owned();
+        // 1ページに収まる(`/Count 1`)。
+        assert!(text.contains("/Count 1"), "the book should fit on one page");
     }
 }

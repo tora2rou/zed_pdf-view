@@ -4733,6 +4733,7 @@ name = "pdf_view_app"
 version = "0.1.0"
 dependencies = [
  "build_diag",
+ "epub_build",
  "gpui",
  "gpui_platform",
  "latex_build",
