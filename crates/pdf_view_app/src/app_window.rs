@@ -80,6 +80,8 @@ pub struct AppWindow {
     pub(crate) should_move: bool,
     /// PDFを開く前など、ビューがフォーカスを持たないときにキー操作(Ctrl+Oなど)を受けるためのもの。
     pub(crate) focus_handle: FocusHandle,
+    /// コンパイル中のTypstの文書(タブの`path`)。タブに「…」を出す。
+    pub(crate) compiling: Vec<PathBuf>,
     /// 表示中のPDFが書き換わっていないかの確認。持っている間だけ動く。
     _watch: Task<()>,
 }
@@ -124,6 +126,7 @@ impl AppWindow {
             show_recent: false,
             should_move: false,
             focus_handle: cx.focus_handle(),
+            compiling: Vec::new(),
             _watch: Self::watch_active_file(window, cx),
         };
         match initial {

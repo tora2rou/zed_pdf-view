@@ -181,6 +181,13 @@ impl AppWindow {
         before_paths: Vec<PathBuf>,
         before: Snapshot,
     ) -> bool {
+        let started = this.update(cx, |this, cx| {
+            this.compiling.push(path.clone());
+            cx.notify();
+        });
+        if started.is_err() {
+            return false;
+        }
         let source = path.clone();
         let (build, merged) = cx
             .background_spawn(async move {
@@ -262,6 +269,8 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.compiling.retain(|p| p != path);
+        cx.notify();
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.path == path) else {
             return;
         };

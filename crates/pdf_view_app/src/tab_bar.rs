@@ -108,65 +108,67 @@ impl AppWindow {
         if self.tabs.is_empty() {
             return None;
         }
-        let tabs = self.tabs.iter().enumerate().map(|(index, tab)| {
-            let active = index == self.active;
-            let group = SharedString::from(format!("tab-close-{index}"));
-            // 見た目の×より左に広げた領域で押せる。
-            let close = div()
-                .id(("tab-close", index))
-                .group(group.clone())
-                .flex_none()
-                .h_full()
-                .pl(px(CLOSE_HIT_EXTRA))
-                .flex()
-                .items_center()
-                // 閉じるボタンの押下が、タブの切り替えにならないようにする。
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.close_tab(index, window, cx);
-                    cx.stop_propagation();
-                }))
-                .child(
-                    div()
-                        .size(px(18.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_sm()
-                        .text_color(rgb(MUTED_TEXT))
-                        .group_hover(group, |d| d.bg(rgb(CLOSE_HOVER)).text_color(rgb(TEXT)))
-                        .child("×"),
-                );
-            div()
-                .id(("tab", index))
-                .flex()
-                .items_center()
-                .gap_1()
-                .max_w(px(TAB_MAX_WIDTH))
-                .h_full()
-                .pl(px(10.0))
-                .pr(px(6.0))
-                .text_sm()
-                .cursor_pointer()
-                .when(active, |d| {
-                    d.bg(rgb(ACTIVE_BACKGROUND)).text_color(rgb(TEXT))
-                })
-                .when(!active, |d| {
-                    d.text_color(rgb(MUTED_TEXT))
-                        .hover(|d| d.bg(rgb(HOVER)).text_color(rgb(TEXT)))
-                })
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.activate_tab(index, window, cx)
-                }))
-                .child(
-                    div()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .child(file_name(&tab.path)),
-                )
-                .child(close)
-        });
+        let tabs =
+            self.tabs.iter().enumerate().map(|(index, tab)| {
+                let active = index == self.active;
+                let compiling = self.compiling.contains(&tab.path);
+                let group = SharedString::from(format!("tab-close-{index}"));
+                // 見た目の×より左に広げた領域で押せる。
+                let close = div()
+                    .id(("tab-close", index))
+                    .group(group.clone())
+                    .flex_none()
+                    .h_full()
+                    .pl(px(CLOSE_HIT_EXTRA))
+                    .flex()
+                    .items_center()
+                    // 閉じるボタンの押下が、タブの切り替えにならないようにする。
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.close_tab(index, window, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        div()
+                            .size(px(18.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_sm()
+                            .text_color(rgb(MUTED_TEXT))
+                            .group_hover(group, |d| d.bg(rgb(CLOSE_HOVER)).text_color(rgb(TEXT)))
+                            .child("×"),
+                    );
+                div()
+                    .id(("tab", index))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .max_w(px(TAB_MAX_WIDTH))
+                    .h_full()
+                    .pl(px(10.0))
+                    .pr(px(6.0))
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(active, |d| {
+                        d.bg(rgb(ACTIVE_BACKGROUND)).text_color(rgb(TEXT))
+                    })
+                    .when(!active, |d| {
+                        d.text_color(rgb(MUTED_TEXT))
+                            .hover(|d| d.bg(rgb(HOVER)).text_color(rgb(TEXT)))
+                    })
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.activate_tab(index, window, cx)
+                    }))
+                    .child(div().min_w_0().overflow_hidden().whitespace_nowrap().child(
+                        if compiling {
+                            format!("{} …", file_name(&tab.path))
+                        } else {
+                            file_name(&tab.path)
+                        },
+                    ))
+                    .child(close)
+            });
         Some(
             div()
                 .flex()

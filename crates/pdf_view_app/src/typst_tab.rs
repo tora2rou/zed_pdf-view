@@ -338,6 +338,8 @@ mod tests {
         fs::write(&source, "page one\n#pagebreak()\npage two").unwrap();
         settle(cx, 8);
         assert_eq!(pages(&view, cx), 2);
+        // コンパイルが終われば、「コンパイル中」の印は消える。
+        assert!(view.read_with(cx, |this, _| this.compiling.is_empty()));
     }
 
     /// `import`したファイルを書き換えても、コンパイルし直す。
