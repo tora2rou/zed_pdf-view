@@ -5,6 +5,7 @@ mod document;
 mod error;
 mod linkify;
 mod links;
+mod ocr;
 mod outline;
 mod render;
 mod selection;
