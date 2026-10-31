@@ -15,6 +15,9 @@ Chihayaburuのcrateは Apache-2.0。これらを1つにまとめたTuzuriの実�
 # Tuzuri (Zed本体)。実行ファイルは target/debug/tuzuri
 cargo run -p zed -- path/to/file.pdf
 
+# releaseビルド。実行ファイルは target/release/tuzuri
+cargo build --release -p zed
+
 # Chihayaburu単体のビューア
 cargo run --release -p pdf_view_app -- path/to/file.pdf
 ```
@@ -24,6 +27,11 @@ Linuxで必要なパッケージは `script/linux` (Zedのスクリプト) で�
 - `.typ` を編集中に `Ctrl+K V` (macOSは `Cmd+K V`) で、横にライブプレビューを開く (`Ctrl+Shift+V` は同じペイン)。
   編集が0.3秒止まるたびに、保存していない内容でコンパイルして表示を更新する (`crates/typst_ui`)。
   プレビューを `Ctrl+クリック` (macOSは `Cmd+クリック`) すると、エディタのカーソルが該当するソースの行へ移る。
+- デバッグモード: ステータスバーの警告アイコン (またはコマンドパレットの `typst: toggle diagnostics panel`) で
+  「Typst Diagnostics」パネルを開くと、編集中の `.typ` のエラー・警告を一覧し、エディタにも波線で出す。
+  行をクリックするとその位置へ移る。`import` される側のファイルを編集中は、読み込んでいる文書のものを出す。
+  パネルを閉じるとコンパイラを手放し、波線も消える。
+- コンパイラは、ファイルごとに1つをプレビューとデバッグパネルで共有する。PDFはプレビューを開いている間だけ作る。
 - 設定とデータは普通のZedと分けている (Linuxは `~/.config/tuzuri` など)。
 - アプリID (`dev.zed.Zed` など) と配布用スクリプト (`script/bundle-*`) はZedのまま。
 
