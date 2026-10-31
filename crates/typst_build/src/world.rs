@@ -1,6 +1,7 @@
 //! コンパイルに必要な環境(ファイル・フォント・パッケージ・日付)を与える`World`。
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -16,7 +17,7 @@ use typst::{
 use typst_kit::{
     datetime::Time,
     downloader::SystemDownloader,
-    files::{FileStore, FsRoot, SystemFiles},
+    files::{FileLoader, FileStore, FsRoot, SystemFiles},
     fonts::{self, FontStore},
     packages::SystemPackages,
 };
@@ -42,10 +43,41 @@ fn font_store() -> &'static FontStore {
     })
 }
 
+/// プロジェクトのファイルを読む。エディタで編集中(未保存)のファイルは、ディスクの代わりにその内容を返す。
+struct OverlayFiles {
+    system: SystemFiles,
+    /// ファイルの場所(正規化したもの) → 編集中の内容。
+    overlays: HashMap<PathBuf, Bytes>,
+}
+
+impl OverlayFiles {
+    fn resolve(&self, id: FileId) -> FileResult<PathBuf> {
+        self.system.resolve(id)
+    }
+}
+
+impl FileLoader for OverlayFiles {
+    fn load(&self, id: FileId) -> FileResult<Bytes> {
+        // パッケージのファイルは編集されない。場所を調べるとダウンロードが始まることもあるので、見ない。
+        if matches!(id.root(), VirtualRoot::Project)
+            && let Ok(path) = self.system.resolve(id)
+            && let Some(text) = self.overlays.get(&path)
+        {
+            return Ok(text.clone());
+        }
+        self.system.load(id)
+    }
+}
+
+/// 比べられるように、ファイルの場所を正規化する。まだディスクに無いファイルは、そのまま。
+fn normalize(path: PathBuf) -> PathBuf {
+    path.canonicalize().unwrap_or(path)
+}
+
 pub struct FileWorld {
     root: PathBuf,
     main: FileId,
-    files: FileStore<SystemFiles>,
+    files: FileStore<OverlayFiles>,
     time: Time,
 }
 
@@ -64,10 +96,24 @@ impl FileWorld {
         let packages = SystemPackages::new(SystemDownloader::new(USER_AGENT));
         Ok(Self {
             main: RootedPath::new(VirtualRoot::Project, vpath).intern(),
-            files: FileStore::new(SystemFiles::new(FsRoot::new(root.clone()), packages)),
+            files: FileStore::new(OverlayFiles {
+                system: SystemFiles::new(FsRoot::new(root.clone()), packages),
+                overlays: HashMap::new(),
+            }),
             root,
             time: Time::system(),
         })
+    }
+
+    /// 次のコンパイルの準備をする。`overlays`(ファイルの場所 → 編集中の内容)はディスクより優先する。
+    /// 読み込んだファイルは捨てずに「古い」印を付けるので、変わっていない部分は前回の結果を使い回せる。
+    pub fn prepare(&mut self, overlays: HashMap<PathBuf, String>) {
+        self.files.loader_mut().overlays = overlays
+            .into_iter()
+            .map(|(path, text)| (normalize(path), Bytes::from_string(text)))
+            .collect();
+        self.files.reset();
+        self.time = Time::system();
     }
 
     /// コンパイル中に読み込んだ、プロジェクト内のファイル(読めなかったものも含む)。メインのファイルは
@@ -85,6 +131,14 @@ impl FileWorld {
         paths
     }
 
+    /// 直前のコンパイルで読み込んだソース(パッケージのものも含む)。
+    pub fn sources_used(&mut self) -> HashMap<FileId, Source> {
+        let ids: Vec<FileId> = self.files.dependencies().1.collect();
+        ids.into_iter()
+            .filter_map(|id| Some((id, self.files.source(id).ok()?)))
+            .collect()
+    }
+
     /// `id`のファイルの、ファイルシステム上の場所。
     pub fn real_path(&self, id: FileId) -> Option<PathBuf> {
         self.files.loader().resolve(id).ok()
@@ -100,6 +154,12 @@ impl FileWorld {
                 .to_string(),
             Err(_) => format!("{:?}", id.vpath()),
         }
+    }
+}
+
+impl typst_ide::IdeWorld for FileWorld {
+    fn upcast(&self) -> &dyn World {
+        self
     }
 }
 

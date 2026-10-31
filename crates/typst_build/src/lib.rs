@@ -2,12 +2,23 @@
 
 mod world;
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    num::NonZeroUsize,
+    path::{Path, PathBuf},
+};
 
 use typst::{
-    World as _, WorldExt as _,
-    diag::{Severity, SourceDiagnostic},
+    Library, World, WorldExt as _,
+    diag::{FileResult, Severity, SourceDiagnostic},
+    foundations::{Bytes, Datetime, Duration},
+    introspection::PagedPosition,
+    layout::{Abs, Point},
+    syntax::{FileId, Source},
+    text::{Font, FontBook},
+    utils::LazyHash,
 };
+use typst_ide::Jump;
 use typst_layout::PagedDocument;
 use typst_pdf::PdfOptions;
 
@@ -68,9 +79,18 @@ pub struct Failure {
     pub dependencies: Vec<PathBuf>,
 }
 
+/// コンパイルのキャッシュのうち、直近この回数のコンパイルで使われなかったものは捨てる。
+/// 編集のたびにコンパイルするので、捨てないとメモリが増え続ける。
+const CACHE_MAX_AGE: usize = 10;
+
 /// `path`のTypst文書をPDFにコンパイルする。プロジェクトのルートは`path`のあるフォルダ。
 pub fn compile_file(path: &Path) -> Result<Compiled, Failure> {
-    let mut world = FileWorld::new(path).map_err(|message| Failure {
+    let mut world = FileWorld::new(path).map_err(|message| setup_failure(path, message))?;
+    compile_world(&mut world).map(|(compiled, _)| compiled)
+}
+
+fn setup_failure(path: &Path, message: String) -> Failure {
+    Failure {
         errors: vec![Diagnostic {
             severity: Level::Error,
             message,
@@ -82,21 +102,147 @@ pub fn compile_file(path: &Path) -> Result<Compiled, Failure> {
         }],
         warnings: Vec::new(),
         dependencies: vec![path.to_path_buf()],
-    })?;
-    let typst::diag::Warned { output, warnings } = typst::compile::<PagedDocument>(&world);
-    let warnings = diagnostics(&world, &warnings);
-    let result = output.and_then(|document| typst_pdf::pdf(&document, &PdfOptions::default()));
+    }
+}
+
+fn compile_world(world: &mut FileWorld) -> Result<(Compiled, PagedDocument), Failure> {
+    let typst::diag::Warned { output, warnings } = typst::compile::<PagedDocument>(&*world);
+    let warnings = diagnostics(world, &warnings);
+    let result = output.and_then(|document| {
+        let pdf = typst_pdf::pdf(&document, &PdfOptions::default())?;
+        Ok((pdf, document))
+    });
+    comemo::evict(CACHE_MAX_AGE);
     match result {
-        Ok(pdf) => Ok(Compiled {
-            pdf,
-            warnings,
-            dependencies: world.dependencies(),
-        }),
+        Ok((pdf, document)) => Ok((
+            Compiled {
+                pdf,
+                warnings,
+                dependencies: world.dependencies(),
+            },
+            document,
+        )),
         Err(errors) => Err(Failure {
-            errors: diagnostics(&world, &errors),
+            errors: diagnostics(world, &errors),
             warnings,
             dependencies: world.dependencies(),
         }),
+    }
+}
+
+/// ソースの中の位置(1始まりの行・列)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourcePosition {
+    pub path: PathBuf,
+    pub line: usize,
+    pub column: usize,
+}
+
+/// 1つの文書を、編集に合わせて何度もコンパイルする。前回の結果を使い回すので、2回目以降は速い。
+/// 最後に成功した結果の文書を持ち、プレビューのクリック位置からソースの位置を引ける。
+pub struct Session {
+    world: FileWorld,
+    /// 最後に成功した結果の文書と、それを作ったときのソース。
+    document: Option<(PagedDocument, SourceSnapshot)>,
+}
+
+impl Session {
+    /// `main`をメインのファイルとするセッション。プロジェクトのルートは`main`のあるフォルダ。
+    pub fn new(main: &Path) -> Result<Self, Failure> {
+        let world = FileWorld::new(main).map_err(|message| setup_failure(main, message))?;
+        Ok(Self {
+            world,
+            document: None,
+        })
+    }
+
+    /// コンパイルする。`overlays`(ファイルの場所 → エディタで編集中の内容)は、ディスクより優先する。
+    /// 失敗したときは、前回成功した文書をそのまま残す(プレビューは古い表示を見せ続けるため)。
+    pub fn compile(&mut self, overlays: HashMap<PathBuf, String>) -> Result<Compiled, Failure> {
+        self.world.prepare(overlays);
+        let (compiled, document) = compile_world(&mut self.world)?;
+        let sources = SourceSnapshot {
+            sources: self.world.sources_used(),
+        };
+        self.document = Some((document, sources));
+        Ok(compiled)
+    }
+
+    /// 最後に成功した結果の`page`ページ目(0始まり)の、左上から(`x`, `y`)ポイントの位置を作った
+    /// ソースの位置。文字などがなければ`None`。
+    pub fn source_at(&self, page: usize, x: f32, y: f32) -> Option<SourcePosition> {
+        let (document, sources) = self.document.as_ref()?;
+        let position = PagedPosition {
+            page: NonZeroUsize::new(page + 1)?,
+            point: Point::new(Abs::pt(f64::from(x)), Abs::pt(f64::from(y))),
+        };
+        // 文書の中の位置は、作ったときのソースを指している。その後に編集されていても正しく引けるよう、
+        // そのときのソースで調べる。
+        let world = SnapshotWorld {
+            world: &self.world,
+            sources,
+        };
+        let Jump::File(id, offset) = typst_ide::jump_from_click(&world, document, &position)?
+        else {
+            return None;
+        };
+        let source = world.source(id).ok()?;
+        let (line, column) = source.lines().byte_to_line_column(offset)?;
+        Some(SourcePosition {
+            path: self.world.real_path(id)?,
+            line: line + 1,
+            column: column + 1,
+        })
+    }
+}
+
+/// コンパイルに使ったソース。ソースは書き換えるときに複製されるので、持っていても編集中のものとは別。
+struct SourceSnapshot {
+    sources: HashMap<FileId, Source>,
+}
+
+/// ソースだけを`SourceSnapshot`から返す`World`。それ以外は`world`に任せる。
+struct SnapshotWorld<'a> {
+    world: &'a FileWorld,
+    sources: &'a SourceSnapshot,
+}
+
+impl typst_ide::IdeWorld for SnapshotWorld<'_> {
+    fn upcast(&self) -> &dyn World {
+        self
+    }
+}
+
+impl World for SnapshotWorld<'_> {
+    fn library(&self) -> &LazyHash<Library> {
+        self.world.library()
+    }
+
+    fn book(&self) -> &LazyHash<FontBook> {
+        self.world.book()
+    }
+
+    fn main(&self) -> FileId {
+        self.world.main()
+    }
+
+    fn source(&self, id: FileId) -> FileResult<Source> {
+        match self.sources.sources.get(&id) {
+            Some(source) => Ok(source.clone()),
+            None => self.world.source(id),
+        }
+    }
+
+    fn file(&self, id: FileId) -> FileResult<Bytes> {
+        self.world.file(id)
+    }
+
+    fn font(&self, index: usize) -> Option<Font> {
+        self.world.font(index)
+    }
+
+    fn today(&self, offset: Option<Duration>) -> Option<Datetime> {
+        self.world.today(offset)
     }
 }
 
@@ -322,5 +468,80 @@ mod tests {
         assert!(failure.errors.len() >= 3, "{:?}", failure.errors);
         assert!(failure.errors.iter().all(|e| e.line.is_some()));
         assert!(failure.errors.iter().any(|e| !e.hints.is_empty()));
+    }
+
+    /// 編集中の内容(未保存)でコンパイルできる。ディスクの内容は使わない。
+    #[test]
+    fn a_session_compiles_unsaved_text() {
+        let dir = project("session_overlay", &[("main.typ", "#unknown()")]);
+        let main = dir.join("main.typ");
+        let mut session = Session::new(&main).unwrap();
+        assert!(session.compile(HashMap::new()).is_err());
+        let overlays = HashMap::from([(main.clone(), "= Fixed".to_string())]);
+        assert!(session.compile(overlays).is_ok());
+        // 編集中の内容を渡さなければ、ディスクの内容に戻る。
+        assert!(session.compile(HashMap::new()).is_err());
+    }
+
+    /// 読み込まれる側のファイルも、編集中の内容が使われる。
+    #[test]
+    fn a_session_uses_unsaved_text_of_imported_files() {
+        let dir = project(
+            "session_import",
+            &[
+                ("main.typ", "#import \"lib.typ\": f\n#f()"),
+                ("lib.typ", "#let f() = nope"),
+            ],
+        );
+        let mut session = Session::new(&dir.join("main.typ")).unwrap();
+        assert!(session.compile(HashMap::new()).is_err());
+        let overlays = HashMap::from([(dir.join("lib.typ"), "#let f() = [ok]".to_string())]);
+        assert!(session.compile(overlays).is_ok());
+    }
+
+    /// プレビューのクリック位置から、その文字を書いたソースの行が分かる。
+    #[test]
+    fn source_at_maps_a_click_to_the_line() {
+        let dir = project(
+            "session_jump",
+            &[(
+                "main.typ",
+                "#set page(width: 200pt, height: 200pt, margin: 10pt)\n#set text(size: 20pt)\nFirst\n\nSecond\n",
+            )],
+        );
+        let mut session = Session::new(&dir.join("main.typ")).unwrap();
+        assert_eq!(
+            session.source_at(0, 15.0, 20.0),
+            None,
+            "nothing compiled yet"
+        );
+        session.compile(HashMap::new()).unwrap();
+
+        let first = session.source_at(0, 15.0, 20.0).expect("first line");
+        assert_eq!(first.line, 3);
+        assert_eq!(first.path, dir.canonicalize().unwrap().join("main.typ"));
+        let second = session.source_at(0, 15.0, 55.0).expect("second paragraph");
+        assert_eq!(second.line, 5);
+        // 余白(何も描かれていない所)や、無いページは`None`。
+        assert_eq!(session.source_at(0, 190.0, 190.0), None);
+        assert_eq!(session.source_at(5, 15.0, 20.0), None);
+    }
+
+    /// 失敗しても、前回成功した文書でクリック位置を引ける(表示は古いまま残るので)。
+    #[test]
+    fn source_at_keeps_working_after_a_failed_compile() {
+        let dir = project(
+            "session_jump_fail",
+            &[(
+                "main.typ",
+                "#set page(width: 200pt, height: 200pt, margin: 10pt)\n#set text(size: 20pt)\nFirst\n",
+            )],
+        );
+        let main = dir.join("main.typ");
+        let mut session = Session::new(&main).unwrap();
+        session.compile(HashMap::new()).unwrap();
+        let broken = HashMap::from([(main, "#unknown()".to_string())]);
+        assert!(session.compile(broken).is_err());
+        assert_eq!(session.source_at(0, 15.0, 20.0).map(|p| p.line), Some(3));
     }
 }
