@@ -5956,6 +5956,7 @@ mod tests {
                 "outline",
                 "outline_panel",
                 "pane",
+                "pdf_viewer",
                 "picker",
                 "project_panel",
                 "project_search",
