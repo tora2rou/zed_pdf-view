@@ -1,0 +1,145 @@
+name: Release
+
+# Builds Tuzuri for Linux (tar.gz) and Windows (zip).
+# - Pushing a tag like v0.1.0 attaches both to a GitHub Release.
+# - Running it by hand (Actions → Release → Run workflow) leaves them as the run's artifacts.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Debug info makes the build several times larger (the runners' disks are small) and slower to link.
+  CARGO_PROFILE_RELEASE_DEBUG: '0'
+  # Turns Zed's auto-update off, so a downloaded Tuzuri is never replaced by Zed.
+  ZED_UPDATE_EXPLANATION: 'Tuzuri is updated from https://github.com/tora2rou/zed_pdf-view/releases'
+
+jobs:
+  linux:
+    # An older Ubuntu, so the binary runs on distributions with an older glibc too.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      # The runner has ~14GB free; a Zed release build needs more.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang cmake lld llvm pkg-config \
+            libasound2-dev libfontconfig-dev libfreetype-dev libgit2-dev libglib2.0-dev \
+            libssl-dev libsqlite3-dev libstdc++-12-dev libva-dev libvulkan-dev libwayland-dev \
+            libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libzstd-dev
+
+      # Only the downloaded crates are cached; the build output is too large for the cache.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        run: cargo --config .cargo/bundle-config.toml build --release --locked -p zed
+
+      - name: Package
+        run: packaging/linux/package.sh target/release/tuzuri dist "${{ steps.version.outputs.version }}"
+
+      - name: Check the package runs
+        run: |
+          tar -C dist -xzf dist/tuzuri-*.tar.gz
+          printf '= Hello\n' > hello.typ
+          dist/tuzuri-*/bin/tuzuri export hello.typ
+          test "$(head -c 5 hello.pdf)" = "%PDF-"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tuzuri-linux-x86_64
+          path: dist/tuzuri-*.tar.gz
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/tuzuri-*.tar.gz
+          fail_on_unmatched_files: true
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 300
+    steps:
+      # Some paths in Zed's sources are longer than Windows' default limit.
+      - name: Allow long paths
+        run: git config --system core.longpaths true
+
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        run: cargo --config .cargo/bundle-config.toml build --release --locked -p zed
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "tuzuri-${{ steps.version.outputs.version }}-windows-x64"
+          New-Item -ItemType Directory -Path "dist/$name" -Force | Out-Null
+          Copy-Item target/release/tuzuri.exe "dist/$name/"
+          Copy-Item packaging/windows/README.txt "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+
+      - name: Check the package runs
+        shell: pwsh
+        run: |
+          Set-Content -Path hello.typ -Value '= Hello'
+          $exe = Get-ChildItem dist -Recurse -Filter tuzuri.exe | Select-Object -First 1
+          # tuzuri.exe is a window app, so wait for it explicitly.
+          $process = Start-Process -FilePath $exe.FullName -ArgumentList 'export', 'hello.typ' -Wait -PassThru -NoNewWindow
+          if ($process.ExitCode -ne 0) { throw "export failed: $($process.ExitCode)" }
+          $head = [System.Text.Encoding]::ASCII.GetString((Get-Content hello.pdf -AsByteStream -TotalCount 5))
+          if ($head -ne '%PDF-') { throw "not a PDF: $head" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tuzuri-windows-x64
+          path: dist/tuzuri-*.zip
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/tuzuri-*.zip
+          fail_on_unmatched_files: true
