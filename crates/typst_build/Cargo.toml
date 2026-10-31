@@ -9,6 +9,7 @@ path = "src/lib.rs"
 
 [dependencies]
 comemo.workspace = true
+memmap2.workspace = true
 typst.workspace = true
 typst-ide.workspace = true
 typst-layout.workspace = true

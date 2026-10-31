@@ -18,7 +18,7 @@ use typst_kit::{
     datetime::Time,
     downloader::SystemDownloader,
     files::{FileLoader, FileStore, FsRoot, SystemFiles},
-    fonts::{self, FontStore},
+    fonts::{self, FontPath, FontSource, FontStore},
     packages::SystemPackages,
 };
 
@@ -38,9 +38,27 @@ fn font_store() -> &'static FontStore {
         let mut store = FontStore::new();
         // 同梱のフォントを先に。システムのフォントに同名があっても、同梱のものが優先される。
         store.extend(fonts::embedded());
-        store.extend(fonts::system());
+        store.extend(fonts::system().map(|(path, info)| (MappedFont(path), info)));
         store
     })
+}
+
+/// システムのフォント。`typst-kit`はファイル全体をメモリに読み込むが、日本語のフォントは1つで
+/// 数十MBあるので、メモリマップで読む。使ったところだけがメモリに載り、足りなくなればOSが捨てて
+/// 読み直せる (PDFの読み込みと同じ方針)。
+struct MappedFont(FontPath);
+
+impl FontSource for MappedFont {
+    fn load(&self) -> Option<Font> {
+        let file = std::fs::File::open(&self.0.path).ok()?;
+        // SAFETY: 開いている間に他のプログラムがフォントのファイルを短くすると、不正なアクセスに
+        // なりうる。システムのフォントは普通は書き換えられないので、許容する。
+        let data = match unsafe { memmap2::Mmap::map(&file) } {
+            Ok(map) => Bytes::new(map),
+            Err(_) => Bytes::new(std::fs::read(&self.0.path).ok()?),
+        };
+        Font::new(data, self.0.index)
+    }
 }
 
 /// プロジェクトのファイルを読む。エディタで編集中(未保存)のファイルは、ディスクの代わりにその内容を返す。

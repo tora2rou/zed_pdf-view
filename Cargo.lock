@@ -20626,6 +20626,7 @@ name = "typst_build"
 version = "0.1.0"
 dependencies = [
  "comemo",
+ "memmap2",
  "typst",
  "typst-ide",
  "typst-kit",
