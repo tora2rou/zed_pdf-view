@@ -3,6 +3,7 @@
 
 - Zed本体はリポジトリの直下(`crates/zed` など)。Zed の README は [README.zed.md](README.zed.md)。
 - Chihayaburuのcrate: `crates/pdf_core` / `crates/pdf_viewer` / `crates/pdf_view_app` / `crates/typst_build`
+- Zedへの組み込み用のcrate: `crates/pdf_tab` (PDFのタブ) / `crates/typst_preview` (Typstのプレビュー)
 - 元にしたZedのコミット: `fae8a35` (2026-10-20)。上流の更新は `git fetch zed main` してmergeする。
 
 ## ライセンス
@@ -20,6 +21,9 @@ cargo run --release -p pdf_view_app -- path/to/file.pdf
 Linuxで必要なパッケージは `script/linux` (Zedのスクリプト) で入れられる (cmakeも必要)。
 
 - `.pdf` はZedのタブで開き、表示にはChihayaburuの `PdfView` を使う (`crates/pdf_tab`)。キー操作は `assets/keymaps/default-*.json` の `PdfViewer`。
+- `.typ` を編集中に `Ctrl+K V` (macOSは `Cmd+K V`) で、横にライブプレビューを開く (`Ctrl+Shift+V` は同じペイン)。
+  編集が0.3秒止まるたびに、保存していない内容でコンパイルして表示を更新する (`crates/typst_preview`)。
+  プレビューを `Ctrl+クリック` (macOSは `Cmd+クリック`) すると、エディタのカーソルが該当するソースの行へ移る。
 - 設定とデータは普通のZedと分けている (Linuxは `~/.config/tuzuri` など)。
 - アプリID (`dev.zed.Zed` など) と配布用スクリプト (`script/bundle-*`) はZedのまま。
 
