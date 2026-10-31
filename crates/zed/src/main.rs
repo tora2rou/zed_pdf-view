@@ -215,6 +215,13 @@ fn main() {
     {
         let mut args = std::env::args().skip(1);
         if args.next().as_deref() == Some("export") {
+            // Release builds on Windows have no console of their own; print to the terminal that
+            // started us, as `--foreground` does.
+            #[cfg(all(not(debug_assertions), target_os = "windows"))]
+            unsafe {
+                use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+                AttachConsole(ATTACH_PARENT_PROCESS).ok();
+            }
             process::exit(typst_build::run_export_command(args));
         }
     }
