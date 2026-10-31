@@ -7,12 +7,19 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Which platforms to build
+        type: choice
+        options: [all, linux, windows]
+        default: all
 
 permissions:
   contents: write
 
+# A run for one platform does not cancel a running build of the other.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.ref }}-${{ inputs.platform || 'all' }}
   cancel-in-progress: true
 
 env:
@@ -24,6 +31,7 @@ env:
 
 jobs:
   linux:
+    if: ${{ inputs.platform != 'windows' }}
     # An older Ubuntu, so the binary runs on distributions with an older glibc too.
     runs-on: ubuntu-22.04
     timeout-minutes: 300
@@ -90,6 +98,7 @@ jobs:
           fail_on_unmatched_files: true
 
   windows:
+    if: ${{ inputs.platform != 'linux' }}
     runs-on: windows-latest
     timeout-minutes: 300
     steps:
