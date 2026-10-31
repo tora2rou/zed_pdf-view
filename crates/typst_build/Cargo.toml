@@ -1,0 +1,21 @@
+[package]
+name = "typst_build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+typst = "0.15"
+typst-layout = "0.15"
+typst-pdf = "0.15"
+typst-kit = { version = "0.15", features = [
+    "embedded-fonts",
+    "scan-fonts",
+    "system-files",
+    "universe-packages",
+    "system-downloader",
+    "datetime",
+] }

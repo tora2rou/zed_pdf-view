@@ -188,6 +188,30 @@ impl PdfView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.swap_document(document, window);
+        self.set_scroll(0.0, 0.0, cx);
+    }
+
+    /// 同じファイルが書き換わったときに、読み直した文書へ入れ替える。スクロール位置とズームなどの
+    /// 表示設定は保つ(ページが減っていたら、新しい範囲に収める)。
+    pub fn reload_document(
+        &mut self,
+        document: Arc<PdfDocument>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (x, y) = self.scroll_position();
+        self.swap_document(document, window);
+        let (viewport_width, viewport_height) = self.viewport_size(window);
+        let y = self
+            .layout(viewport_width)
+            .clamp_scroll_top(y, viewport_height);
+        self.set_scroll(x, y, cx);
+        self.show_notice("Reloaded", window, cx);
+    }
+
+    /// 文書を入れ替え、それに依存する状態(画像・選択・目次の開閉など)を捨てる。スクロール位置は触らない。
+    fn swap_document(&mut self, document: Arc<PdfDocument>, window: &mut Window) {
         for old in self.images.clear().into_iter().chain(self.thumbs.clear()) {
             window.drop_image(old).ok();
         }
@@ -205,7 +229,6 @@ impl PdfView {
         self.document = document;
         self.page_input = None;
         self.drag = None;
-        self.set_scroll(0.0, 0.0, cx);
     }
 
     pub fn document(&self) -> &Arc<PdfDocument> {
@@ -884,5 +907,44 @@ mod tests {
         });
         assert!(max > 0.0, "the content should be scrollable");
         assert!(offset > max * 0.9, "offset {offset} of {max}");
+    }
+
+    /// 読み直しても、スクロール位置・ズーム・回転は保たれ、新しい文書の画像が描かれる。
+    #[gpui::test]
+    fn reloading_keeps_the_view_state(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx);
+        view.update_in(cx, |this, window, cx| {
+            this.set_zoom(2.0, (0.0, 0.0), cx);
+            this.scroll_to_page(1, window, cx);
+        });
+        cx.run_until_parked();
+        let before = view.read_with(cx, |this, _| (this.zoom(), this.scroll_position()));
+        assert!(before.1.1 > 0.0, "should be scrolled down");
+
+        let again = Arc::new(PdfDocument::open(FIXTURE).unwrap());
+        view.update_in(cx, |this, window, cx| {
+            this.reload_document(again, window, cx)
+        });
+        cx.run_until_parked();
+
+        let after = view.read_with(cx, |this, _| (this.zoom(), this.scroll_position()));
+        assert_eq!(after, before);
+        let notice = view.read_with(cx, |this, _| this.notice.clone());
+        assert_eq!(notice.as_deref(), Some("Reloaded"));
+    }
+
+    /// `set_document`は、これまでどおり先頭に戻る。
+    #[gpui::test]
+    fn replacing_the_document_still_returns_to_the_top(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx);
+        view.update_in(cx, |this, window, cx| {
+            this.set_zoom(2.0, (0.0, 0.0), cx);
+            this.scroll_to_page(1, window, cx);
+        });
+        cx.run_until_parked();
+        let other = Arc::new(PdfDocument::open(FIXTURE).unwrap());
+        view.update_in(cx, |this, window, cx| this.set_document(other, window, cx));
+        cx.run_until_parked();
+        assert_eq!(view.read_with(cx, |this, _| this.scroll_position().1), 0.0);
     }
 }

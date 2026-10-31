@@ -13,6 +13,7 @@ gpui.workspace = true
 gpui_platform.workspace = true
 pdf_core.workspace = true
 pdf_viewer.workspace = true
+typst_build.workspace = true
 log.workspace = true
 
 [dev-dependencies]
