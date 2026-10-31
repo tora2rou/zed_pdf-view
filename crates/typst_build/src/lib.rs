@@ -1,5 +1,6 @@
 //! Typstの文書をPDFにコンパイルする。GUIには依存しない。
 
+mod export;
 mod world;
 
 use std::{
@@ -22,6 +23,10 @@ use typst_ide::Jump;
 use typst_layout::PagedDocument;
 use typst_pdf::PdfOptions;
 
+pub use export::{
+    EXPORT_USAGE, ExportArgs, Exported, Format, export, format_diagnostic, parse_export_args,
+    run_export_command, write_atomically,
+};
 use world::FileWorld;
 
 /// エラーまたは警告1件。
