@@ -36,7 +36,16 @@ pub struct Diagnostic {
     /// 該当する位置(1始まりの行・列)。
     pub line: Option<usize>,
     pub column: Option<usize>,
+    /// 該当する範囲。エディタに印を付けるために使う。
+    pub range: Option<Utf16Range>,
     pub hints: Vec<String>,
+}
+
+/// ファイルの中の範囲。行は0始まり、列は行頭からのUTF-16の単位数(エディタやLSPと同じ数え方)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Utf16Range {
+    pub start: (usize, usize),
+    pub end: (usize, usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +55,20 @@ pub enum Level {
 }
 
 impl Diagnostic {
+    /// 位置のないエラー(ファイルが開けないなど)。
+    pub fn error(message: String) -> Self {
+        Self {
+            severity: Level::Error,
+            message,
+            file: None,
+            path: None,
+            line: None,
+            column: None,
+            range: None,
+            hints: Vec::new(),
+        }
+    }
+
     /// `file:line:column: message`の1行の形。
     pub fn one_line(&self) -> String {
         let mut out = String::new();
@@ -86,30 +109,34 @@ const CACHE_MAX_AGE: usize = 10;
 /// `path`のTypst文書をPDFにコンパイルする。プロジェクトのルートは`path`のあるフォルダ。
 pub fn compile_file(path: &Path) -> Result<Compiled, Failure> {
     let mut world = FileWorld::new(path).map_err(|message| setup_failure(path, message))?;
-    compile_world(&mut world).map(|(compiled, _)| compiled)
+    compile_world(&mut world, true).map(|(compiled, _)| compiled)
 }
 
 fn setup_failure(path: &Path, message: String) -> Failure {
     Failure {
         errors: vec![Diagnostic {
-            severity: Level::Error,
-            message,
             file: Some(path.display().to_string()),
             path: Some(path.to_path_buf()),
-            line: None,
-            column: None,
-            hints: Vec::new(),
+            ..Diagnostic::error(message)
         }],
         warnings: Vec::new(),
         dependencies: vec![path.to_path_buf()],
     }
 }
 
-fn compile_world(world: &mut FileWorld) -> Result<(Compiled, PagedDocument), Failure> {
+/// `export_pdf`が偽なら、PDFは作らず(`Compiled::pdf`は空)、エラーと警告だけを調べる。
+fn compile_world(
+    world: &mut FileWorld,
+    export_pdf: bool,
+) -> Result<(Compiled, PagedDocument), Failure> {
     let typst::diag::Warned { output, warnings } = typst::compile::<PagedDocument>(&*world);
     let warnings = diagnostics(world, &warnings);
     let result = output.and_then(|document| {
-        let pdf = typst_pdf::pdf(&document, &PdfOptions::default())?;
+        let pdf = if export_pdf {
+            typst_pdf::pdf(&document, &PdfOptions::default())?
+        } else {
+            Vec::new()
+        };
         Ok((pdf, document))
     });
     comemo::evict(CACHE_MAX_AGE);
@@ -157,10 +184,15 @@ impl Session {
     }
 
     /// コンパイルする。`overlays`(ファイルの場所 → エディタで編集中の内容)は、ディスクより優先する。
+    /// `export_pdf`が偽なら、PDFは作らずにエラーと警告だけを調べる(`Compiled::pdf`は空)。
     /// 失敗したときは、前回成功した文書をそのまま残す(プレビューは古い表示を見せ続けるため)。
-    pub fn compile(&mut self, overlays: HashMap<PathBuf, String>) -> Result<Compiled, Failure> {
+    pub fn compile(
+        &mut self,
+        overlays: HashMap<PathBuf, String>,
+        export_pdf: bool,
+    ) -> Result<Compiled, Failure> {
         self.world.prepare(overlays);
-        let (compiled, document) = compile_world(&mut self.world)?;
+        let (compiled, document) = compile_world(&mut self.world, export_pdf)?;
         let sources = SourceSnapshot {
             sources: self.world.sources_used(),
         };
@@ -265,6 +297,7 @@ fn diagnostic(world: &FileWorld, diagnostic: &SourceDiagnostic) -> Diagnostic {
         path: location.as_ref().and_then(|l| l.path.clone()),
         line: location.as_ref().map(|l| l.line),
         column: location.as_ref().map(|l| l.column),
+        range: location.as_ref().and_then(|l| l.range),
         hints: diagnostic
             .hints
             .iter()
@@ -278,6 +311,7 @@ struct Location {
     path: Option<PathBuf>,
     line: usize,
     column: usize,
+    range: Option<Utf16Range>,
 }
 
 /// エラーの位置を、ファイル名と行・列にする。位置が無い(文書全体の)ものは`None`。
@@ -285,12 +319,23 @@ fn locate(world: &FileWorld, diagnostic: &SourceDiagnostic) -> Option<Location> 
     let id = diagnostic.span.id()?;
     let source = world.source(id).ok()?;
     let range = world.range(diagnostic.span)?;
-    let (line, column) = source.lines().byte_to_line_column(range.start)?;
+    let lines = source.lines();
+    let (line, column) = lines.byte_to_line_column(range.start)?;
+    let utf16 = |byte: usize| -> Option<(usize, usize)> {
+        let line = lines.byte_to_line(byte)?;
+        let line_start = lines.line_to_byte(line)?;
+        let column = lines.text().get(line_start..byte)?.encode_utf16().count();
+        Some((line, column))
+    };
+    let utf16_range = utf16(range.start)
+        .zip(utf16(range.end))
+        .map(|(start, end)| Utf16Range { start, end });
     Some(Location {
         file: world.display_name(id),
         path: world.real_path(id),
         line: line + 1,
         column: column + 1,
+        range: utf16_range,
     })
 }
 
@@ -476,11 +521,11 @@ mod tests {
         let dir = project("session_overlay", &[("main.typ", "#unknown()")]);
         let main = dir.join("main.typ");
         let mut session = Session::new(&main).unwrap();
-        assert!(session.compile(HashMap::new()).is_err());
+        assert!(session.compile(HashMap::new(), true).is_err());
         let overlays = HashMap::from([(main.clone(), "= Fixed".to_string())]);
-        assert!(session.compile(overlays).is_ok());
+        assert!(session.compile(overlays, true).is_ok());
         // 編集中の内容を渡さなければ、ディスクの内容に戻る。
-        assert!(session.compile(HashMap::new()).is_err());
+        assert!(session.compile(HashMap::new(), true).is_err());
     }
 
     /// 読み込まれる側のファイルも、編集中の内容が使われる。
@@ -494,9 +539,9 @@ mod tests {
             ],
         );
         let mut session = Session::new(&dir.join("main.typ")).unwrap();
-        assert!(session.compile(HashMap::new()).is_err());
+        assert!(session.compile(HashMap::new(), true).is_err());
         let overlays = HashMap::from([(dir.join("lib.typ"), "#let f() = [ok]".to_string())]);
-        assert!(session.compile(overlays).is_ok());
+        assert!(session.compile(overlays, true).is_ok());
     }
 
     /// プレビューのクリック位置から、その文字を書いたソースの行が分かる。
@@ -515,7 +560,7 @@ mod tests {
             None,
             "nothing compiled yet"
         );
-        session.compile(HashMap::new()).unwrap();
+        session.compile(HashMap::new(), true).unwrap();
 
         let first = session.source_at(0, 15.0, 20.0).expect("first line");
         assert_eq!(first.line, 3);
@@ -539,9 +584,36 @@ mod tests {
         );
         let main = dir.join("main.typ");
         let mut session = Session::new(&main).unwrap();
-        session.compile(HashMap::new()).unwrap();
+        session.compile(HashMap::new(), true).unwrap();
         let broken = HashMap::from([(main, "#unknown()".to_string())]);
-        assert!(session.compile(broken).is_err());
+        assert!(session.compile(broken, true).is_err());
         assert_eq!(session.source_at(0, 15.0, 20.0).map(|p| p.line), Some(3));
+    }
+
+    /// エラーの範囲は、行が0始まり、列がUTF-16の単位数。日本語の後ろでも正しく数える。
+    #[test]
+    fn errors_have_a_utf16_range() {
+        let dir = project("utf16", &[("main.typ", "日本語 #unknown()\n")]);
+        let failure = compile_file(&dir.join("main.typ")).unwrap_err();
+        let range = failure.errors[0].range.expect("a range");
+        // 「日本語 #」は5文字、UTF-16でも5単位。`unknown`は7単位。
+        assert_eq!(range.start, (0, 5));
+        assert_eq!(range.end, (0, 12));
+    }
+
+    /// PDFを作らずに、エラーと警告だけを調べられる。
+    #[test]
+    fn a_session_can_skip_the_pdf() {
+        let dir = project("session_check", &[("main.typ", "= Title")]);
+        let mut session = Session::new(&dir.join("main.typ")).unwrap();
+        let compiled = session.compile(HashMap::new(), false).unwrap();
+        assert!(compiled.pdf.is_empty());
+        assert!(
+            session
+                .compile(HashMap::new(), true)
+                .unwrap()
+                .pdf
+                .starts_with(b"%PDF-")
+        );
     }
 }

@@ -76,15 +76,7 @@ pub fn build(source: &Path) -> Build {
 }
 
 fn internal_error(message: String) -> Diagnostic {
-    Diagnostic {
-        severity: Level::Error,
-        message,
-        file: None,
-        path: None,
-        line: None,
-        column: None,
-        hints: Vec::new(),
-    }
+    Diagnostic::error(message)
 }
 
 /// コンパイルしたPDFの置き場所。起動ごと(プロセスごと)のフォルダ。

@@ -21,7 +21,7 @@ use parking_lot::Mutex;
 use pdf_core::PdfDocument;
 use pdf_viewer::{PdfView, PdfViewEvent};
 use project::{Project, buffer_store::BufferStoreEvent};
-use typst_build::{Diagnostic, Level, Session, SourcePosition};
+use typst_build::{Diagnostic, Session, SourcePosition};
 use ui::prelude::*;
 use workspace::{Pane, Workspace, item::Item};
 
@@ -241,7 +241,7 @@ impl TypstPreview {
         cx.notify();
 
         let compile = cx.background_spawn(async move {
-            let result = session.lock().compile(overlays);
+            let result = session.lock().compile(overlays, true);
             result.map(|compiled| {
                 let document = PdfDocument::from_bytes(compiled.pdf).map(Arc::new);
                 (document, compiled.warnings, compiled.dependencies)
@@ -259,7 +259,7 @@ impl TypstPreview {
                         dependencies
                     }
                     Ok((Err(error), warnings, dependencies)) => {
-                        this.errors = vec![message(format!(
+                        this.errors = vec![Diagnostic::error(format!(
                             "The compiled PDF could not be opened: {error}"
                         ))];
                         this.warnings = warnings;
@@ -417,18 +417,6 @@ fn byte_column(line: &str, chars: usize) -> usize {
     line.char_indices()
         .nth(chars)
         .map_or(line.len(), |(offset, _)| offset)
-}
-
-fn message(text: String) -> Diagnostic {
-    Diagnostic {
-        severity: Level::Error,
-        message: text,
-        file: None,
-        path: None,
-        line: None,
-        column: None,
-        hints: Vec::new(),
-    }
 }
 
 impl Render for TypstPreview {
