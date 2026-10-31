@@ -1,5 +1,5 @@
 [package]
-name = "typst_preview"
+name = "typst_ui"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/typst_preview.rs"
+path = "src/typst_ui.rs"
 doctest = false
 
 [dependencies]

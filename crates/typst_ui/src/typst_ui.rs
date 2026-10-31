@@ -1,6 +1,8 @@
-//! Live preview of Typst documents. The text in the editor (saved or not) is compiled shortly after
-//! each edit and shown with Chihayaburu's `PdfView`. Ctrl/Cmd-clicking the preview jumps to the
-//! source that produced the clicked text.
+//! Typst support for Tuzuri.
+//!
+//! Live preview: the text in the editor (saved or not) is compiled shortly after each edit and
+//! shown with Chihayaburu's `PdfView`. Ctrl/Cmd-clicking the preview jumps to the source that
+//! produced the clicked text.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -495,7 +497,7 @@ mod tests {
         &'a mut VisualTestContext,
     ) {
         init_test(cx);
-        let dir = std::env::temp_dir().join(format!("typst_preview_{name}_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("typst_ui_{name}_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let dir = dir.canonicalize().unwrap();
         let main = dir.join("main.typ");

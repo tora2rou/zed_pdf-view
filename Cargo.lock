@@ -20622,7 +20622,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "typst_preview"
+name = "typst_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -24294,7 +24294,7 @@ dependencies = [
  "title_bar",
  "toolchain_selector",
  "tracing",
- "typst_preview",
+ "typst_ui",
  "ui",
  "ui_prompt",
  "url",
