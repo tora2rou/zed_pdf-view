@@ -8,6 +8,21 @@ fn open_valid_pdf() {
 }
 
 #[test]
+fn from_bytes_opens_pdf_in_memory() {
+    let bytes = std::fs::read(FIXTURE).unwrap();
+    let document = PdfDocument::from_bytes(bytes).unwrap();
+    assert_eq!(document.page_count(), 2);
+}
+
+#[test]
+fn from_bytes_rejects_garbage() {
+    assert!(matches!(
+        PdfDocument::from_bytes(b"not a pdf".to_vec()),
+        Err(PdfError::Load(_))
+    ));
+}
+
+#[test]
 fn open_missing_file_is_io_error() {
     assert!(matches!(
         PdfDocument::open("/nonexistent.pdf"),

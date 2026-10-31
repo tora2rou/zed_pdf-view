@@ -63,8 +63,16 @@ pub struct PdfDocument {
 
 impl PdfDocument {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PdfError> {
-        let pdf =
-            Pdf::new(read_file(path.as_ref())?).map_err(|e| PdfError::Load(format!("{e:?}")))?;
+        Self::from_data(read_file(path.as_ref())?)
+    }
+
+    /// メモリ上のPDF(コンパイルしたばかりのものなど)を開く。ファイルを経由しない。
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, PdfError> {
+        Self::from_data(Arc::new(FileData::Read(bytes)))
+    }
+
+    fn from_data(data: Arc<FileData>) -> Result<Self, PdfError> {
+        let pdf = Pdf::new(data).map_err(|e| PdfError::Load(format!("{e:?}")))?;
         let page_count = pdf.pages().len();
         Ok(Self {
             pdf,
