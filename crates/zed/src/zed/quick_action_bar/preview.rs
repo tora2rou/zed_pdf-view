@@ -11,6 +11,7 @@ enum PreviewTarget {
     Markdown(Entity<Editor>),
     Svg(Entity<MultiBuffer>),
     TabularData(Entity<Editor>),
+    Typst(std::path::PathBuf),
 }
 
 impl QuickActionBar {
@@ -33,6 +34,8 @@ impl QuickActionBar {
             && TabularDataPreviewPane::is_tabular_data_file(&editor, cx)
         {
             PreviewTarget::TabularData(editor)
+        } else if let Some(main) = typst_ui::typst_file_of(active_item.as_ref(), cx) {
+            PreviewTarget::Typst(main)
         } else {
             return None;
         };
@@ -53,6 +56,17 @@ impl QuickActionBar {
                 "Preview Tabular Data",
                 &tabular_data_preview::OpenPreview as &dyn gpui::Action,
             ),
+            // Typst is written while watching the output, so a click opens the preview beside the
+            // editor and alt-click opens it in the same pane (the reverse of the others).
+            PreviewTarget::Typst(_) => (
+                "toggle-typst-preview",
+                "Preview Typst",
+                &typst_ui::OpenPreviewToTheSide as &dyn gpui::Action,
+            ),
+        };
+        let alt_click_text = match &preview_target {
+            PreviewTarget::Typst(_) => "to open in this pane",
+            _ => "to open in a split",
         };
 
         let alt_click = gpui::Keystroke {
@@ -69,7 +83,7 @@ impl QuickActionBar {
                     tooltip_text,
                     Some(open_action_for_tooltip),
                     format!(
-                        "{} to open in a split",
+                        "{} {alt_click_text}",
                         text_for_keystroke(&alt_click.modifiers, &alt_click.key, cx)
                     ),
                     cx,
@@ -109,6 +123,18 @@ impl QuickActionBar {
                                 } else {
                                     SvgPreviewView::open_preview_in_pane(
                                         workspace, buffer, pane, window, cx,
+                                    );
+                                }
+                            }
+                            PreviewTarget::Typst(main) => {
+                                let main = main.clone();
+                                if open_to_the_side {
+                                    typst_ui::open_preview_in_pane(
+                                        workspace, main, pane, window, cx,
+                                    );
+                                } else {
+                                    typst_ui::open_preview_to_the_side_of_pane(
+                                        workspace, main, pane, window, cx,
                                     );
                                 }
                             }
