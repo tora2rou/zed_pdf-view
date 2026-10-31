@@ -1,5 +1,9 @@
 //! エラーの位置を、外部のエディタで開く。
 
+// Chihayaburu単体アプリのコード。エディタの起動は一瞬で終わるので、Zedが禁じている
+// std::process::Command をそのまま使う。
+#![allow(clippy::disallowed_methods)]
+
 use std::{
     ffi::OsString,
     path::Path,

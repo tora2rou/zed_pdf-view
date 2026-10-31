@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use file_icons::FileIcons;
+use gpui::AppContext as _;
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     ParentElement, Render, SharedString, Styled, Task, Window, div,
@@ -13,8 +15,6 @@ use pdf_core::PdfDocument;
 use pdf_viewer::PdfView;
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
-use gpui::AppContext as _;
-use gpui::prelude::FluentBuilder as _;
 use ui::{Icon, Label, LabelCommon};
 use util::paths::PathExt;
 use workspace::{

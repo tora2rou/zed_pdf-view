@@ -1,5 +1,7 @@
 //! 実際のTesseractを使うOCRのテスト。Tesseractが入っていない環境では、何もせず通る。
 
+#![allow(clippy::disallowed_methods)]
+
 use std::process::Command;
 
 use pdf_core::{LinkTarget, PdfDocument};

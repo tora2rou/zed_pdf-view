@@ -1,5 +1,9 @@
 //! OCR(Tesseract)の出力を、ページの文字(`PageText`)に変換する。
 
+// Zedのclippy.tomlはUIスレッドを止めないよう std::process::Command を禁じている。
+// pdf_coreはGPUIに依存しない同期のライブラリで、OCRは呼び出し側がバックグラウンドで実行する。
+#![allow(clippy::disallowed_methods)]
+
 use std::{
     env,
     ffi::OsString,
