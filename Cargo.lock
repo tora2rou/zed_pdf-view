@@ -24308,6 +24308,7 @@ dependencies = [
  "title_bar",
  "toolchain_selector",
  "tracing",
+ "typst_build",
  "typst_ui",
  "ui",
  "ui_prompt",

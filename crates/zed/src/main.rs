@@ -210,6 +210,15 @@ fn main() {
     #[cfg(unix)]
     util::prevent_root_execution();
 
+    // `tuzuri export <file>` writes a document out without opening a window. It is handled before
+    // Zed's own arguments, which would take `export` for a path to open.
+    {
+        let mut args = std::env::args().skip(1);
+        if args.next().as_deref() == Some("export") {
+            process::exit(typst_build::run_export_command(args));
+        }
+    }
+
     let args = Args::parse();
 
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
