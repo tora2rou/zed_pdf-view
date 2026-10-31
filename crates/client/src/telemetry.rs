@@ -1061,7 +1061,13 @@ mod tests {
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
+            let mut settings_store = SettingsStore::test(cx);
+            // Tuzuri turns telemetry off by default; these tests exercise it switched on.
+            settings_store.update_user_settings(cx, |settings| {
+                let telemetry = settings.telemetry.get_or_insert_default();
+                telemetry.metrics = Some(true);
+                telemetry.diagnostics = Some(true);
+            });
             cx.set_global(settings_store);
         });
     }
