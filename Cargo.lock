@@ -13473,6 +13473,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdf_tab"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "file_icons",
+ "gpui",
+ "pdf_core",
+ "pdf_viewer",
+ "project",
+ "settings",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "pdf_view_app"
 version = "0.1.0"
 dependencies = [

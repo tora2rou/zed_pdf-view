@@ -164,6 +164,7 @@ members = [
     "crates/path",
     "crates/paths",
     "crates/pdf_core",
+    "crates/pdf_tab",
     "crates/pdf_view_app",
     "crates/pdf_viewer",
     "crates/picker",
@@ -441,6 +442,7 @@ outline_panel = { path = "crates/outline_panel" }
 path = { path = "crates/path" }
 paths = { path = "crates/paths" }
 pdf_core = { path = "crates/pdf_core" }
+pdf_tab = { path = "crates/pdf_tab" }
 pdf_viewer = { path = "crates/pdf_viewer" }
 perf = { path = "tooling/perf", default-features = false }
 picker = { path = "crates/picker" }
