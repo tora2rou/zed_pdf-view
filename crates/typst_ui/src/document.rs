@@ -16,7 +16,7 @@ use language::{Buffer, BufferEvent};
 use parking_lot::Mutex;
 use pdf_core::PdfDocument;
 use project::{Project, buffer_store::BufferStoreEvent};
-use typst_build::{Diagnostic, Session, SourcePosition};
+use typst_build::{Diagnostic, Session, SourcePosition, write_atomically};
 
 use crate::{buffer_abs_path, normalize};
 
@@ -241,6 +241,37 @@ impl TypstDocument {
         });
     }
 
+    /// The text of open buffers with unsaved changes. Everything else is read from disk.
+    fn unsaved_text(&self, cx: &App) -> HashMap<PathBuf, String> {
+        self.dependency_buffers(cx)
+            .into_iter()
+            .filter(|(buffer, _)| buffer.read(cx).is_dirty())
+            .map(|(buffer, path)| (path, buffer.read(cx).text()))
+            .collect()
+    }
+
+    /// Compiles the document as it is in the editor (saved or not) and writes the PDF to `output`.
+    /// On failure the errors are returned and an existing file at `output` is left as it was.
+    pub fn export_pdf(&self, output: PathBuf, cx: &App) -> Task<Result<PathBuf, Vec<Diagnostic>>> {
+        let Some(session) = self.session.clone() else {
+            return Task::ready(Err(self.errors.clone()));
+        };
+        let overlays = self.unsaved_text(cx);
+        cx.background_spawn(async move {
+            let compiled = session
+                .lock()
+                .compile(overlays, true)
+                .map_err(|failure| failure.errors)?;
+            write_atomically(&output, &compiled.pdf).map_err(|error| {
+                vec![Diagnostic::error(format!(
+                    "Could not write {}: {error}",
+                    output.display()
+                ))]
+            })?;
+            Ok(output)
+        })
+    }
+
     fn compile(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self.session.clone() else {
             return;
@@ -249,13 +280,7 @@ impl TypstDocument {
             self.recompile = true;
             return;
         }
-        // Only unsaved text needs to be passed; everything else is read from disk.
-        let overlays: HashMap<PathBuf, String> = self
-            .dependency_buffers(cx)
-            .into_iter()
-            .filter(|(buffer, _)| buffer.read(cx).is_dirty())
-            .map(|(buffer, path)| (path, buffer.read(cx).text()))
-            .collect();
+        let overlays = self.unsaved_text(cx);
         let export_pdf = self.wants_pdf();
         self.compiling = true;
         cx.emit(TypstDocumentEvent::Updated);

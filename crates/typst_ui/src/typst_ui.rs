@@ -15,10 +15,12 @@ mod preview;
 use std::path::{Path, PathBuf};
 
 use editor::Editor;
-use gpui::{App, AsyncWindowContext, Context, Entity, EntityId, WeakEntity, Window, actions};
+use gpui::{
+    App, AsyncWindowContext, Context, Entity, EntityId, TaskExt as _, WeakEntity, Window, actions,
+};
 use language::{Buffer, Point};
 use typst_build::SourcePosition;
-use workspace::{ItemHandle, Pane, Workspace};
+use workspace::{ItemHandle, Pane, Toast, Workspace, notifications::NotificationId};
 
 pub use diagnostics_panel::{ToggleDiagnosticsPanel, TypstDiagnosticsPanel};
 pub use document::{PdfRequest, TypstDocument, TypstDocumentEvent};
@@ -31,6 +33,8 @@ actions!(
         OpenPreview,
         /// Opens a live preview of the Typst document next to the editor.
         OpenPreviewToTheSide,
+        /// Writes the Typst document out as a PDF next to its main file.
+        ExportPdf,
     ]
 );
 
@@ -52,7 +56,68 @@ fn register(workspace: &mut Workspace) {
             open_preview_to_the_side_of_pane(workspace, main, origin, window, cx);
         }
     });
+    workspace.register_action(|workspace, _: &ExportPdf, window, cx| {
+        if let Some(path) = active_typst_file(workspace, cx) {
+            export_pdf(workspace, path, window, cx);
+        }
+    });
     diagnostics_panel::register(workspace);
+}
+
+/// Writes the document `path` belongs to out as a PDF next to its main file, with the text as it
+/// is in the editor, and tells the user how it went.
+pub fn export_pdf(
+    workspace: &mut Workspace,
+    path: PathBuf,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let document = TypstDocument::for_file(&path, workspace.project(), cx);
+    let output = typst_build::pdf_path_for(document.read(cx).main());
+    let export = document.read(cx).export_pdf(output, cx);
+    cx.spawn_in(window, async move |workspace, cx| {
+        let result = export.await;
+        // The document (and its compiler) is kept until the export is done.
+        drop(document);
+        let toast_workspace = workspace.clone();
+        workspace
+            .update(cx, |workspace, cx| {
+                let id = NotificationId::unique::<ExportPdf>();
+                let toast = match result {
+                    Ok(output) => {
+                        let message = format!("Exported {}", output.display());
+                        Toast::new(id, message)
+                            .on_click("Open", move |window, cx| {
+                                toast_workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace
+                                            .open_abs_path(
+                                                output.clone(),
+                                                Default::default(),
+                                                window,
+                                                cx,
+                                            )
+                                            .detach_and_log_err(cx);
+                                    })
+                                    .ok();
+                            })
+                            .autohide()
+                    }
+                    Err(errors) => Toast::new(id, export_failure_message(&errors)),
+                };
+                workspace.show_toast(toast, cx);
+            })
+            .ok();
+    })
+    .detach();
+}
+
+fn export_failure_message(errors: &[typst_build::Diagnostic]) -> String {
+    match errors {
+        [] => "Export failed".to_string(),
+        [only] => format!("Export failed: {}", only.one_line()),
+        [first, rest @ ..] => format!("Export failed: {} (+{} more)", first.one_line(), rest.len()),
+    }
 }
 
 /// Opens (or switches to) the preview of `main` in `pane`, and focuses it.
@@ -438,6 +503,59 @@ mod tests {
                 "the editor keeps the focus"
             );
         });
+    }
+
+    fn export_from_editor(workspace: &Entity<Workspace>, main: &Path, cx: &mut VisualTestContext) {
+        workspace.update_in(cx, |workspace, window, cx| {
+            export_pdf(workspace, main.to_path_buf(), window, cx);
+        });
+        settle(cx);
+    }
+
+    /// Exporting from the app writes what is in the editor, unsaved edits included, and tells the
+    /// user; a broken document leaves the previous PDF alone.
+    #[gpui::test]
+    async fn exporting_writes_the_unsaved_text_next_to_the_source(cx: &mut TestAppContext) {
+        let (main, workspace, editor, cx) =
+            open_main("export", &format!("{PAGE}= One\n"), cx).await;
+        let output = main.with_extension("pdf");
+        std::fs::remove_file(&output).ok();
+
+        append(&editor, "#pagebreak()\n= Two\n", cx);
+        export_from_editor(&workspace, &main, cx);
+        let pages = pdf_core::PdfDocument::open(&output).unwrap().page_count();
+        assert_eq!(pages, 2, "the unsaved second page is exported");
+        assert!(std::fs::read_to_string(&main).unwrap().ends_with("= One\n"));
+        let notified = |cx: &mut VisualTestContext| {
+            workspace.read_with(cx, |workspace, _| {
+                workspace.has_notification(&NotificationId::unique::<ExportPdf>())
+            })
+        };
+        assert!(notified(cx), "the user is told where the PDF went");
+        workspace.update(cx, |workspace, cx| {
+            workspace.dismiss_notification(&NotificationId::unique::<ExportPdf>(), cx)
+        });
+
+        append(&editor, "#unknown()\n", cx);
+        let before = std::fs::read(&output).unwrap();
+        export_from_editor(&workspace, &main, cx);
+        assert_eq!(
+            std::fs::read(&output).unwrap(),
+            before,
+            "the previous PDF is kept"
+        );
+        assert!(notified(cx), "the failure is reported");
+    }
+
+    #[test]
+    fn export_failures_name_the_first_error() {
+        let error = |message: &str| typst_build::Diagnostic::error(message.to_string());
+        assert_eq!(export_failure_message(&[]), "Export failed");
+        assert_eq!(export_failure_message(&[error("a")]), "Export failed: a");
+        assert_eq!(
+            export_failure_message(&[error("a"), error("b"), error("c")]),
+            "Export failed: a (+2 more)"
+        );
     }
 
     #[gpui::test]
