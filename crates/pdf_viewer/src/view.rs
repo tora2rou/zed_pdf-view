@@ -200,6 +200,17 @@ impl PdfView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.update_document(document, window, cx);
+        self.show_notice("Reloaded", window, cx);
+    }
+
+    /// `reload_document`と同じだが、知らせを出さない。編集のたびに更新するプレビュー用。
+    pub fn update_document(
+        &mut self,
+        document: Arc<PdfDocument>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (x, y) = self.scroll_position();
         self.swap_document(document, window);
         let (viewport_width, viewport_height) = self.viewport_size(window);
@@ -207,7 +218,6 @@ impl PdfView {
             .layout(viewport_width)
             .clamp_scroll_top(y, viewport_height);
         self.set_scroll(x, y, cx);
-        self.show_notice("Reloaded", window, cx);
     }
 
     /// 文書を入れ替え、それに依存する状態(画像・選択・目次の開閉など)を捨てる。スクロール位置は触らない。
