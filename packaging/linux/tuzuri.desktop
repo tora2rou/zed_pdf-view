@@ -1,0 +1,16 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Tuzuri
+GenericName=Typesetting Editor
+Comment=An editor for typesetting with Typst, built on Zed.
+Exec=@EXEC@ %U
+TryExec=@EXEC@
+Icon=tuzuri
+Terminal=false
+StartupNotify=true
+# The window's app id (Wayland) / WM_CLASS (X11) of the dev channel; links windows to this entry.
+StartupWMClass=dev.zed.Zed-Dev
+Categories=Office;Publishing;TextEditor;
+Keywords=typst;pdf;typesetting;
+MimeType=text/plain;application/pdf;
