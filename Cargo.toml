@@ -1011,6 +1011,8 @@ zeroize = "1.8"
 zstd = { version = "0.13", default-features = false, features = ["legacy", "arrays"] }
 
 # Chihayaburu (PDF viewer) dependencies
+# Typst grammar for syntax highlighting (uben0/tree-sitter-typst, MIT)
+codebook-tree-sitter-typst = "0.12.1"
 comemo = "0.5"
 hayro = "0.8"
 memmap2 = "0.9"

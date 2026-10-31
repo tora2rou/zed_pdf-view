@@ -214,6 +214,11 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             ..Default::default()
         },
         LanguageInfo {
+            name: "typst",
+            adapters: vec![],
+            ..Default::default()
+        },
+        LanguageInfo {
             name: "yaml",
             adapters: vec![yaml_lsp_adapter],
             ..Default::default()
@@ -435,5 +440,57 @@ mod tests {
         assert_eq!(language_of(".env", cx), Some("Env".into()));
         assert_eq!(language_of(".envrc", cx), Some("Shell Script".into()));
         assert_eq!(language_of("deploy.sh", cx), Some("Shell Script".into()));
+    }
+
+    /// The Typst queries load in Zed, and markup and code get the expected highlight names.
+    #[test]
+    fn test_typst_highlights() {
+        use std::collections::BTreeSet;
+        use tree_sitter::StreamingIterator as _;
+
+        let grammar: tree_sitter::Language = codebook_tree_sitter_typst::LANGUAGE.into();
+        // Fails if any query does not compile against the grammar.
+        let language = crate::language("typst", grammar.clone());
+        assert_eq!(language.name().0.as_ref(), "Typst");
+
+        let text = "= Title\n\nSome *bold* and _emph_ text with `raw`.\n\n#let x = 1 // note\n#set text(size: 12pt)\n";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&grammar).unwrap();
+        let tree = parser.parse(text, None).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "{}",
+            tree.root_node().to_sexp()
+        );
+
+        let source = grammars::load_queries("typst").highlights.unwrap();
+        let query = tree_sitter::Query::new(&grammar, &source).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut captures = cursor.captures(&query, tree.root_node(), text.as_bytes());
+        let mut found = BTreeSet::new();
+        while let Some((query_match, index)) = captures.next() {
+            let capture = query_match.captures[*index];
+            let node_text = &text[capture.node.byte_range()];
+            found.insert((
+                query.capture_names()[capture.index as usize],
+                node_text.to_string(),
+            ));
+        }
+        for expected in [
+            ("title", "= Title"),
+            ("emphasis.strong", "*bold*"),
+            ("emphasis", "_emph_"),
+            ("text.literal", "`raw`"),
+            ("keyword", "let"),
+            ("keyword", "set"),
+            ("function", "text"),
+            ("number", "1"),
+            ("comment", "// note"),
+        ] {
+            assert!(
+                found.contains(&(expected.0, expected.1.to_string())),
+                "missing {expected:?} in {found:?}"
+            );
+        }
     }
 }
