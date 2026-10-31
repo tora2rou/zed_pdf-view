@@ -20632,6 +20632,8 @@ dependencies = [
  "fs",
  "gpui",
  "language",
+ "log",
+ "lsp",
  "parking_lot",
  "pdf_core",
  "pdf_viewer",

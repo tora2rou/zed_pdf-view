@@ -4,10 +4,12 @@
 //! shown with Chihayaburu's `PdfView`. Ctrl/Cmd-clicking the preview jumps to the source that
 //! produced the clicked text.
 //!
-//! Debug mode: a dock panel that lists the errors and warnings of the document being edited.
+//! Debug mode: a dock panel that lists the errors and warnings of the document being edited,
+//! and underlines them in the editor.
 
 mod diagnostics_panel;
 mod document;
+mod editor_diagnostics;
 mod preview;
 
 use std::path::{Path, PathBuf};
@@ -331,6 +333,13 @@ mod tests {
             document.errors()[0].clone()
         });
         assert_eq!(error.line, Some(4));
+        let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
+        let error_count = |cx: &mut VisualTestContext| {
+            project.read_with(cx, |project, cx| {
+                project.diagnostic_summary(false, cx).error_count
+            })
+        };
+        assert_eq!(error_count(cx), 1, "the error is underlined in the editor");
 
         // Editing an imported file keeps showing the document that imports it.
         let open = workspace.update_in(cx, |workspace, window, cx| {
@@ -369,6 +378,7 @@ mod tests {
         settle(cx);
         assert!(panel.read_with(cx, |panel, _| panel.document.is_none()));
         assert!(weak.upgrade().is_none(), "the document is released");
+        assert_eq!(error_count(cx), 0, "the underlines are removed");
     }
 
     #[gpui::test]

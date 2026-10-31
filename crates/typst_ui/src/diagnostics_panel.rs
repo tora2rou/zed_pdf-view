@@ -19,6 +19,7 @@ use workspace::{
 use crate::{
     active_typst_file,
     document::{TypstDocument, TypstDocumentEvent},
+    editor_diagnostics::EditorDiagnostics,
     go_to_source,
 };
 
@@ -44,6 +45,8 @@ pub struct TypstDiagnosticsPanel {
     /// The document being shown. Only held while the panel is visible.
     pub(crate) document: Option<Entity<TypstDocument>>,
     document_subscription: Option<Subscription>,
+    /// The document's problems as underlines in the editor, shown while the panel is.
+    editor_diagnostics: EditorDiagnostics,
     _workspace_subscription: Subscription,
     jump_task: Task<()>,
 }
@@ -83,6 +86,7 @@ impl TypstDiagnosticsPanel {
             active: false,
             document: None,
             document_subscription: None,
+            editor_diagnostics: EditorDiagnostics::new(workspace.project().clone()),
             _workspace_subscription: workspace_subscription,
             jump_task: Task::ready(()),
         }
@@ -111,14 +115,38 @@ impl TypstDiagnosticsPanel {
     }
 
     fn set_document(&mut self, document: Option<Entity<TypstDocument>>, cx: &mut Context<Self>) {
-        self.document_subscription = document
-            .as_ref()
-            .map(|document| cx.subscribe(document, |_, _, _: &TypstDocumentEvent, cx| cx.notify()));
+        self.document_subscription = document.as_ref().map(|document| {
+            cx.subscribe(document, |this, _, _: &TypstDocumentEvent, cx| {
+                this.show_in_editor(cx);
+                cx.notify();
+            })
+        });
         if let Some(document) = &document {
             document.update(cx, |document, cx| document.ensure_compiled(cx));
         }
         self.document = document;
+        self.show_in_editor(cx);
         cx.notify();
+    }
+
+    /// Updates the underlines in the editor. While compiling, the previous ones stay.
+    fn show_in_editor(&mut self, cx: &mut Context<Self>) {
+        let diagnostics: Vec<_> = match &self.document {
+            Some(document) => {
+                let document = document.read(cx);
+                if document.is_compiling() {
+                    return;
+                }
+                document
+                    .errors()
+                    .iter()
+                    .chain(document.warnings())
+                    .cloned()
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+        self.editor_diagnostics.publish(&diagnostics, cx);
     }
 
     pub(crate) fn jump_to(
