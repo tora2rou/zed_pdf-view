@@ -2346,11 +2346,9 @@
   },
   // The extensions that Zed should automatically install on startup.
   //
-  // If you don't want any of these extensions, add this field to your settings
-  // and change the value to `false`.
-  "auto_install_extensions": {
-    "html": true,
-  },
+  // Tuzuri installs none by default: loading any extension starts the WebAssembly runtime, which
+  // costs about 30MB of memory. Add e.g. `"html": true` here to have one installed.
+  "auto_install_extensions": {},
   // Whether to suggest installing extensions based on the files you open.
   "suggest_extensions": true,
   // The capabilities granted to extensions.
