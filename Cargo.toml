@@ -1080,18 +1080,21 @@ khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42
 # https://github.com/dtolnay/cxx/issues/1752
 scratch = { path = "tooling/corgi/patches/scratch" }
 
+# Tuzuri: dev builds keep only file and line information (enough for panics and backtraces).
+# Zed's "limited" debug info made target/ grow to ~180GB. For a debugger with variables, build
+# with `--profile dbg`.
 [profile.dev]
 split-debuginfo = "unpacked"
 incremental = true
 codegen-units = 16
-debug = "limited"
+debug = "line-tables-only"
 
 # mirror configuration for crates compiled for the build platform
 # (without this cargo will compile ~400 crates twice)
 [profile.dev.build-override]
 codegen-units = 16
 split-debuginfo = "unpacked"
-debug = "limited"
+debug = "line-tables-only"
 
 # "debug" is a reserved profile name.
 [profile.dbg]
