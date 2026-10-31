@@ -3,7 +3,10 @@
 //! Live preview: the text in the editor (saved or not) is compiled shortly after each edit and
 //! shown with Chihayaburu's `PdfView`. Ctrl/Cmd-clicking the preview jumps to the source that
 //! produced the clicked text.
+//!
+//! Debug mode: a dock panel that lists the errors and warnings of the document being edited.
 
+mod diagnostics_panel;
 mod document;
 mod preview;
 
@@ -15,6 +18,7 @@ use language::{Buffer, Point};
 use typst_build::SourcePosition;
 use workspace::Workspace;
 
+pub use diagnostics_panel::{ToggleDiagnosticsPanel, TypstDiagnosticsPanel};
 pub use document::{PdfRequest, TypstDocument, TypstDocumentEvent};
 pub use preview::TypstPreview;
 
@@ -47,6 +51,7 @@ fn register(workspace: &mut Workspace) {
             preview::open_preview(workspace, main, pane, false, window, cx);
         }
     });
+    diagnostics_panel::register(workspace);
 }
 
 fn is_typst(path: &Path) -> bool {
@@ -137,6 +142,7 @@ mod tests {
     use super::*;
     use crate::document::DEBOUNCE;
     use fs::FakeFs;
+    use gpui::AppContext as _;
     use gpui::{TestAppContext, VisualTestContext};
     use pdf_viewer::PdfViewEvent;
     use project::Project;
@@ -287,6 +293,82 @@ mod tests {
         let other = main.with_file_name("other.typ");
         let unrelated = cx.update(|_, cx| TypstDocument::for_file(&other, &project, cx));
         assert_ne!(unrelated, document);
+    }
+
+    fn open_diagnostics_panel(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<TypstDiagnosticsPanel> {
+        workspace.update_in(cx, |workspace, window, cx| {
+            let workspace_entity = cx.entity();
+            let panel =
+                cx.new(|cx| TypstDiagnosticsPanel::new(&workspace_entity, workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_panel_focus::<TypstDiagnosticsPanel>(window, cx);
+            panel
+        })
+    }
+
+    /// Debug mode lists the problems of the document being edited, including files it imports,
+    /// jumps to a problem when it is clicked, and lets go of the document when hidden.
+    #[gpui::test]
+    async fn the_diagnostics_panel_follows_the_active_document(cx: &mut TestAppContext) {
+        let (main, workspace, editor, cx) = open_project(
+            "panel",
+            &[
+                ("main.typ", "#import \"lib.typ\": f\n#f()\n\n#unknown()\n"),
+                ("lib.typ", "#let f() = [x]\n"),
+            ],
+            cx,
+        )
+        .await;
+        let panel = open_diagnostics_panel(&workspace, cx);
+        settle(cx);
+        let document = panel.read_with(cx, |panel, _| panel.document.clone().expect("a document"));
+        let error = document.read_with(cx, |document, _| {
+            assert_eq!(document.main(), main.as_path());
+            assert_eq!(document.errors().len(), 1, "{:?}", document.errors());
+            document.errors()[0].clone()
+        });
+        assert_eq!(error.line, Some(4));
+
+        // Editing an imported file keeps showing the document that imports it.
+        let open = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                main.with_file_name("lib.typ"),
+                Default::default(),
+                window,
+                cx,
+            )
+        });
+        open.await.unwrap();
+        settle(cx);
+        assert_eq!(
+            panel.read_with(cx, |panel, _| panel.document.clone()),
+            Some(document.clone())
+        );
+
+        // Clicking a problem moves the cursor to it.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.jump_to(main.clone(), 4, 2, window, cx);
+        });
+        settle(cx);
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let head = editor.selections.newest::<Point>(&snapshot).head();
+            assert_eq!(head, Point::new(3, 1));
+        });
+
+        // Hiding the panel turns debug mode off and releases the compiler.
+        let weak = document.downgrade();
+        drop(document);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TypstDiagnosticsPanel>(window, cx);
+            workspace.close_panel::<TypstDiagnosticsPanel>(window, cx);
+        });
+        settle(cx);
+        assert!(panel.read_with(cx, |panel, _| panel.document.is_none()));
+        assert!(weak.upgrade().is_none(), "the document is released");
     }
 
     #[gpui::test]
