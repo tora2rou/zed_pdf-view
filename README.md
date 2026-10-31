@@ -31,6 +31,8 @@ Linuxで必要なパッケージは `script/linux` (Zedのスクリプト) で�
   「Typst Diagnostics」パネルを開くと、編集中の `.typ` のエラー・警告を一覧し、エディタにも波線で出す。
   行をクリックするとその位置へ移る。`import` される側のファイルを編集中は、読み込んでいる文書のものを出す。
   パネルを閉じるとコンパイラを手放し、波線も消える。
+- `.typ` は組み込みの言語「Typst」として色分けする (文法は uben0/tree-sitter-typst、定義は `crates/grammars/src/typst`)。
+  見出しはアウトラインにも出る。
 - コンパイラは、ファイルごとに1つをプレビューとデバッグパネルで共有する。PDFはプレビューを開いている間だけ作る。
 - 設定とデータは普通のZedと分けている (Linuxは `~/.config/tuzuri` など)。
 - アプリID (`dev.zed.Zed` など) と配布用スクリプト (`script/bundle-*`) はZedのまま。
