@@ -75,6 +75,11 @@ impl QuickActionBar {
             ..Default::default()
         };
 
+        let export_button = match &preview_target {
+            PreviewTarget::Typst(main) => Some(self.render_typst_export_button(main.clone())),
+            _ => None,
+        };
+
         let button = IconButton::new(button_id, IconName::Eye)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
@@ -155,6 +160,32 @@ impl QuickActionBar {
                 }
             });
 
-        Some(button.into_any_element())
+        Some(match export_button {
+            Some(export_button) => h_flex()
+                .gap_1()
+                .child(export_button)
+                .child(button)
+                .into_any_element(),
+            None => button.into_any_element(),
+        })
+    }
+
+    /// Writes the Typst document out as a PDF next to its main file.
+    fn render_typst_export_button(&self, main: std::path::PathBuf) -> IconButton {
+        let workspace_handle = self.workspace.clone();
+        IconButton::new("typst-export-pdf", IconName::Download)
+            .icon_size(IconSize::Small)
+            .style(ButtonStyle::Subtle)
+            .tooltip(Tooltip::for_action_title(
+                "Export PDF",
+                &typst_ui::ExportPdf,
+            ))
+            .on_click(move |_, window, cx| {
+                workspace_handle
+                    .update(cx, |workspace, cx| {
+                        typst_ui::export_pdf(workspace, main.clone(), window, cx);
+                    })
+                    .ok();
+            })
     }
 }
