@@ -18,6 +18,9 @@ cargo run -p zed -- path/to/file.pdf
 # releaseビルド。実行ファイルは target/release/tuzuri
 cargo build --release -p zed
 
+# ウィンドウを出さずにPDFへ書き出す (省略すると隣に doc.pdf。エラーなら終了コード1)
+tuzuri export doc.typ [-o out.pdf] [--format pdf]
+
 # Chihayaburu単体のビューア
 cargo run --release -p pdf_view_app -- path/to/file.pdf
 ```
@@ -34,6 +37,8 @@ Linuxで必要なパッケージは `script/linux` (Zedのスクリプト) で�
   パネルを閉じるとコンパイラを手放し、波線も消える。
 - `.typ` は組み込みの言語「Typst」として色分けする (文法は uben0/tree-sitter-typst、定義は `crates/grammars/src/typst`)。
   見出しはアウトラインにも出る。
+- 書き出し: エディタ右上の下向き矢印のアイコン、またはコマンドパレットの `typst: export pdf` で、編集中(未保存を含む)の内容を
+  メインのファイルの隣にPDFで書き出す。終わると通知が出て、「Open」でTuzuriの中に開ける。失敗しても前のPDFは残る。
 - コンパイラは、ファイルごとに1つをプレビューとデバッグパネルで共有する。PDFはプレビューを開いている間だけ作る。
 - 設定とデータは普通のZedと分けている (Linuxは `~/.config/tuzuri` など)。
 - アプリID (`dev.zed.Zed` など) と配布用スクリプト (`script/bundle-*`) はZedのまま。
