@@ -572,6 +572,15 @@ impl PdfView {
     }
 }
 
+/// `PdfView`から組み込み先へ知らせること。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PdfViewEvent {
+    /// Ctrl/Cmd を押しながらページをクリックした。位置は回転前のページ上のポイント(左上が原点)。
+    ModifiedClick { page: usize, x: f32, y: f32 },
+}
+
+impl gpui::EventEmitter<PdfViewEvent> for PdfView {}
+
 impl Focusable for PdfView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()

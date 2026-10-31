@@ -5,7 +5,7 @@ use pdf_core::LinkTarget;
 
 use crate::{
     link_hit::{is_click, link_at, openable_uri},
-    view::{PdfView, Tool},
+    view::{PdfView, PdfViewEvent, Tool},
 };
 
 impl PdfView {
@@ -32,12 +32,13 @@ impl PdfView {
             .detach();
         }
     }
-    /// ウィンドウ上の位置`position`にあるリンクの移動先。リンクが無ければ`None`。
-    pub(crate) fn link_target_at(
+    /// ウィンドウ上の位置`position`が指す、ページ番号と、回転前のページ上の位置(ポイント、左上が原点)。
+    /// ページの外なら`None`。
+    pub(crate) fn page_point_at(
         &self,
         position: Point<Pixels>,
         window: &Window,
-    ) -> Option<LinkTarget> {
+    ) -> Option<(usize, f32, f32)> {
         let bounds = self.scroll_handle.bounds();
         // ページ領域の外(ツールバーやサイドバー)は対象外。
         if !bounds.contains(&position) {
@@ -53,9 +54,19 @@ impl PdfView {
         let shown = (local_x / self.zoom, local_y / self.zoom);
         let base = *self.base_sizes.get(page)?;
         let (bx, by) = self.appearance.rotation.to_base(base, shown);
+        Some((page, bx, by))
+    }
+
+    /// ウィンドウ上の位置`position`にあるリンクの移動先。リンクが無ければ`None`。
+    pub(crate) fn link_target_at(
+        &self,
+        position: Point<Pixels>,
+        window: &Window,
+    ) -> Option<LinkTarget> {
+        let (page, x, y) = self.page_point_at(position, window)?;
         // まだバックグラウンドで読み込み中のページは、リンクなしとして扱う(待たない)。
         let links = self.document.page_links_if_ready(page)?;
-        link_at(links, bx, by).map(|link| link.target.clone())
+        link_at(links, x, y).map(|link| link.target.clone())
     }
 
     /// マウスの移動に合わせて、リンク上かどうか(カーソルの形)を更新する。ドラッグ中は何もしない。
@@ -90,6 +101,13 @@ impl PdfView {
         let click = is_click(drag.mouse, up);
         if self.tool == Tool::Select {
             self.finish_selection(cx);
+        }
+        // Ctrl/Cmd + クリックは、組み込み先(Typstのプレビューなど)へ位置を知らせる。リンクは踏まない。
+        if click && (event.modifiers.control || event.modifiers.platform) {
+            if let Some((page, x, y)) = self.page_point_at(event.position, window) {
+                cx.emit(PdfViewEvent::ModifiedClick { page, x, y });
+            }
+            return;
         }
         let target = self.link_target_at(event.position, window);
         log::debug!("mouse up: click={click}, link={target:?}");
@@ -127,7 +145,7 @@ mod tests {
     use crate::actions::RotateClockwise;
     use gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
     use pdf_core::PdfDocument;
-    use std::sync::Arc;
+    use std::{cell::RefCell, rc::Rc, sync::Arc};
 
     const WITH_LINKS: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -218,6 +236,31 @@ mod tests {
             opened.starts_with("https://example.com/docs/ocr"),
             "{opened}"
         );
+    }
+
+    #[gpui::test]
+    fn ctrl_clicking_reports_the_page_point_instead_of_following_links(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx, 2.0);
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|_, cx| {
+            let events = events.clone();
+            cx.subscribe(&view, move |_, event: &PdfViewEvent, _| {
+                events.borrow_mut().push(*event)
+            })
+            .detach();
+        });
+        let rect = view.read_with(cx, |this, _| this.document.page_links(0).unwrap()[WEB].rect);
+        let at = link_center(&view, cx, WEB);
+        cx.simulate_click(at, Modifiers::control());
+
+        assert_eq!(cx.opened_url(), None);
+        let events = events.borrow();
+        let [PdfViewEvent::ModifiedClick { page, x, y }] = events.as_slice() else {
+            panic!("expected one click event, got {events:?}");
+        };
+        assert_eq!(*page, 0);
+        assert!((x - (rect.x + rect.width / 2.0)).abs() < 1.0, "x={x}");
+        assert!((y - (rect.y + rect.height / 2.0)).abs() < 1.0, "y={y}");
     }
 
     #[gpui::test]

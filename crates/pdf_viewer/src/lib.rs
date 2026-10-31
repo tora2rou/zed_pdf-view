@@ -27,4 +27,4 @@ pub use actions::{
     ToggleFullscreen, ToggleSidebar, ZoomIn, ZoomOut, init,
 };
 pub use convert::to_render_image;
-pub use view::PdfView;
+pub use view::{PdfView, PdfViewEvent};
