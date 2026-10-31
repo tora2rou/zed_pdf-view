@@ -24,9 +24,13 @@ mkdir -p "$dir/bin" "$dir/lib" "$dir/share/applications" \
 cp "$binary" "$dir/bin/tuzuri"
 strip --strip-unneeded "$dir/bin/tuzuri"
 
-# Zedの script/bundle-linux と同じく、基本のライブラリ以外を同梱する。
+# Zedの script/bundle-linux と同じく、基本のライブラリ以外を同梱する。ただし、次のものはシステムのものを使う。
+# - libstdc++: GPUのドライバ (Mesa) が実行時に読み込まれ、システムの新しい libstdc++ を必要とする。
+#   ビルドしたUbuntuの古いものが先に読まれていると、ドライバが読めず画面を作れない
+#   ("Failed to create surface")。libstdc++ は後方互換なので、新しいシステムのもので動く。
+# - libxkbcommon: システムのキーボードの設定ファイルと版が合っていないと、読めずにエラーを出す。
 ldd "$binary" | awk '/=> \// { print $3 }' |
-  grep -v -E '/(ld-linux[^/]*|libc|libm|libgcc_s|libpthread|libdl|libresolv|librt|libasound)\.so' |
+  grep -v -E '/(ld-linux[^/]*|libc|libm|libgcc_s|libstdc\+\+|libxkbcommon(-x11)?|libpthread|libdl|libresolv|librt|libasound)\.so' |
   grep -v -E '/(libglib-2\.0|libgobject-2\.0|libgio-2\.0|libgmodule-2\.0|libpcre2?-8?|libmount|libblkid|libselinux|libffi|libz|libsystemd)\.so' |
   while read -r lib; do cp -L "$lib" "$dir/lib/"; done || true
 
