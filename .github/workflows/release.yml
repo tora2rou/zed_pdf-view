@@ -28,6 +28,12 @@ env:
   CARGO_PROFILE_RELEASE_DEBUG: '0'
   # Turns Zed's auto-update off, so a downloaded Tuzuri is never replaced by Zed.
   ZED_UPDATE_EXPLANATION: 'Tuzuri is updated from https://github.com/tora2rou/zed_pdf-view/releases'
+  # Compiled crates are kept in the GitHub Actions cache by sccache, so crates that did not change
+  # (Zed's own included) are not compiled again. The final link still runs every time.
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: 'true'
+  # A cache that cannot be reached must not fail the build; it just compiles.
+  SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
 
 jobs:
   linux:
@@ -54,10 +60,12 @@ jobs:
             libssl-dev libsqlite3-dev libstdc++-12-dev libva-dev libvulkan-dev libwayland-dev \
             libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libzstd-dev
 
-      # Only the downloaded crates are cached; the build output is too large for the cache.
+      # The downloaded crates; compiled crates are cached by sccache below.
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
+
+      - uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Version
         id: version
@@ -74,6 +82,9 @@ jobs:
           CC: clang
           CXX: clang++
         run: cargo --config .cargo/bundle-config.toml build --release --locked -p zed
+
+      - name: Cache statistics
+        run: sccache --show-stats
 
       - name: Package
         run: packaging/linux/package.sh target/release/tuzuri dist "${{ steps.version.outputs.version }}"
@@ -112,6 +123,8 @@ jobs:
         with:
           cache-targets: false
 
+      - uses: mozilla-actions/sccache-action@v0.0.11
+
       - name: Version
         id: version
         shell: bash
@@ -124,6 +137,9 @@ jobs:
 
       - name: Build
         run: cargo --config .cargo/bundle-config.toml build --release --locked -p zed
+
+      - name: Cache statistics
+        run: sccache --show-stats
 
       - name: Package
         shell: pwsh
