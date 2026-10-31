@@ -11,13 +11,17 @@ Chihayaburuのcrateは Apache-2.0。これらを1つにまとめたTuzuriの実�
 
 ## ビルドと実行
 ```sh
-# Tuzuri (Zed本体)
-cargo run -p zed
+# Tuzuri (Zed本体)。実行ファイルは target/debug/tuzuri
+cargo run -p zed -- path/to/file.pdf
 
 # Chihayaburu単体のビューア
 cargo run --release -p pdf_view_app -- path/to/file.pdf
 ```
-Linuxで必要なパッケージは `script/linux` (Zedのスクリプト) で入れられる。
+Linuxで必要なパッケージは `script/linux` (Zedのスクリプト) で入れられる (cmakeも必要)。
+
+- `.pdf` はZedのタブで開き、表示にはChihayaburuの `PdfView` を使う (`crates/pdf_tab`)。キー操作は `assets/keymaps/default-*.json` の `PdfViewer`。
+- 設定とデータは普通のZedと分けている (Linuxは `~/.config/tuzuri` など)。
+- アプリID (`dev.zed.Zed` など) と配布用スクリプト (`script/bundle-*`) はZedのまま。
 
 ---
 
