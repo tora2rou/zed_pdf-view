@@ -34,12 +34,12 @@ jobs:
       # Rustは rust-toolchain.toml のバージョンが自動で入る。
       - uses: Swatinem/rust-cache@v2
 
-      # ワークスペースにはZed全体が入っているので、Chihayaburu (と組み込み用のpdf_tab) のcrateだけを対象にする。
+      # ワークスペースにはZed全体が入っているので、Chihayaburu (と組み込み用のpdf_tab・typst_preview) のcrateだけを対象にする。
       - name: Format
-        run: cargo fmt --check -p pdf_core -p pdf_viewer -p pdf_view_app -p typst_build -p pdf_tab
+        run: cargo fmt --check -p pdf_core -p pdf_viewer -p pdf_view_app -p typst_build -p pdf_tab -p typst_preview
 
       - name: Clippy
-        run: cargo clippy --no-deps --all-targets --locked -p pdf_core -p pdf_viewer -p pdf_view_app -p typst_build -p pdf_tab -- -D warnings
+        run: cargo clippy --no-deps --all-targets --locked -p pdf_core -p pdf_viewer -p pdf_view_app -p typst_build -p pdf_tab -p typst_preview -- -D warnings
 
       - name: Test
-        run: cargo test --locked -p pdf_core -p pdf_viewer -p pdf_view_app -p typst_build -p pdf_tab
+        run: cargo test --locked -p pdf_core -p pdf_viewer -p pdf_view_app -p typst_build -p pdf_tab -p typst_preview
