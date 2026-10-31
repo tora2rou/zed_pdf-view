@@ -341,6 +341,39 @@ impl TypstPreview {
             }
         });
     }
+
+    fn file_name(&self) -> String {
+        self.main
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    fn render_status(&self, cx: &App) -> Option<impl IntoElement> {
+        let (text, color) = if let Some(first) = self.errors.first() {
+            let more = match self.errors.len() {
+                1 => String::new(),
+                count => format!(" (+{} more)", count - 1),
+            };
+            (format!("{}{more}", first.one_line()), Color::Error)
+        } else if self.compiling && self.viewer.is_none() {
+            ("Compiling…".to_string(), Color::Muted)
+        } else if !self.warnings.is_empty() {
+            let count = self.warnings.len();
+            let noun = if count == 1 { "warning" } else { "warnings" };
+            (format!("{count} {noun}"), Color::Warning)
+        } else {
+            return None;
+        };
+        Some(
+            div()
+                .px_2()
+                .py_1()
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .child(Label::new(text).color(color).single_line()),
+        )
+    }
 }
 
 /// Opens the source file, preferring a pane other than the one showing the preview.
@@ -395,41 +428,6 @@ fn message(text: String) -> Diagnostic {
         line: None,
         column: None,
         hints: Vec::new(),
-    }
-}
-
-impl TypstPreview {
-    fn file_name(&self) -> String {
-        self.main
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    }
-
-    fn render_status(&self, cx: &App) -> Option<impl IntoElement> {
-        let (text, color) = if let Some(first) = self.errors.first() {
-            let more = match self.errors.len() {
-                1 => String::new(),
-                count => format!(" (+{} more)", count - 1),
-            };
-            (format!("{}{more}", first.one_line()), Color::Error)
-        } else if self.compiling && self.viewer.is_none() {
-            ("Compiling…".to_string(), Color::Muted)
-        } else if !self.warnings.is_empty() {
-            let count = self.warnings.len();
-            let noun = if count == 1 { "warning" } else { "warnings" };
-            (format!("{count} {noun}"), Color::Warning)
-        } else {
-            return None;
-        };
-        Some(
-            div()
-                .px_2()
-                .py_1()
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
-                .child(Label::new(text).color(color).single_line()),
-        )
     }
 }
 
