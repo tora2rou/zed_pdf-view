@@ -5983,6 +5983,7 @@ mod tests {
                 "theme_selector",
                 "toast",
                 "toolchain",
+                "typst",
                 "variable_list",
                 "vim",
                 "which_key",

@@ -24294,6 +24294,7 @@ dependencies = [
  "title_bar",
  "toolchain_selector",
  "tracing",
+ "typst_preview",
  "ui",
  "ui_prompt",
  "url",
