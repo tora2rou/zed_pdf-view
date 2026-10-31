@@ -2,17 +2,15 @@
 //! the same way a language server's diagnostics are shown.
 
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashSet},
     path::PathBuf,
 };
 
 use gpui::{App, Entity};
-use language::{
-    Diagnostic as EditorDiagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind,
-};
+use language::DiagnosticSourceKind;
 use lsp::{DiagnosticSeverity, LanguageServerId};
-use project::Project;
-use text::{PointUtf16, Unclipped};
+use project::{Project, lsp_store::DocumentDiagnosticsUpdate};
 use typst_build::{Diagnostic, Level};
 
 /// The id Typst diagnostics are stored under. Zed groups diagnostics by language server; real
@@ -39,44 +37,62 @@ impl EditorDiagnostics {
         diagnostics: impl IntoIterator<Item = &'a Diagnostic>,
         cx: &mut App,
     ) {
-        let mut by_path = to_editor_diagnostics(diagnostics);
+        let mut by_path = to_lsp_diagnostics(diagnostics);
         for stale in self.published.drain() {
             by_path.entry(stale).or_default();
         }
         self.published = by_path
             .iter()
-            .filter(|(_, entries)| !entries.is_empty())
+            .filter(|(_, diagnostics)| !diagnostics.is_empty())
             .map(|(path, _)| path.clone())
             .collect();
+        let updates: Vec<_> = by_path
+            .into_iter()
+            .filter_map(|(path, diagnostics)| {
+                let uri = lsp::Uri::from_file_path(&path).ok()?;
+                Some(DocumentDiagnosticsUpdate {
+                    diagnostics: lsp::PublishDiagnosticsParams {
+                        uri,
+                        diagnostics,
+                        version: None,
+                    },
+                    result_id: None,
+                    registration_id: None,
+                    server_id: TYPST_SERVER_ID,
+                    disk_based_sources: Cow::Borrowed(&[]),
+                })
+            })
+            .collect();
+        if updates.is_empty() {
+            return;
+        }
         let lsp_store = self.project.read(cx).lsp_store();
         lsp_store.update(cx, |lsp_store, cx| {
-            for (path, entries) in by_path {
-                if let Err(error) = lsp_store.update_diagnostic_entries(
-                    TYPST_SERVER_ID,
-                    path,
-                    None,
-                    None,
-                    entries,
-                    cx,
-                ) {
-                    log::warn!("failed to show Typst diagnostics: {error:#}");
-                }
+            // Each update replaces all earlier Typst diagnostics of its file.
+            if let Err(error) = lsp_store.merge_lsp_diagnostics(
+                DiagnosticSourceKind::Other,
+                updates,
+                |_, _, _| false,
+                cx,
+            ) {
+                log::warn!("failed to show Typst diagnostics: {error:#}");
             }
         });
     }
 }
 
-/// Groups the diagnostics that have a location by file, as editor diagnostics.
-fn to_editor_diagnostics<'a>(
+/// Groups the diagnostics that have a location by file, as LSP diagnostics. LSP positions count
+/// columns in UTF-16 units, like Typst's ranges.
+fn to_lsp_diagnostics<'a>(
     diagnostics: impl IntoIterator<Item = &'a Diagnostic>,
-) -> BTreeMap<PathBuf, Vec<DiagnosticEntry<Unclipped<PointUtf16>>>> {
+) -> BTreeMap<PathBuf, Vec<lsp::Diagnostic>> {
     let mut by_path: BTreeMap<PathBuf, Vec<_>> = BTreeMap::new();
-    for (group_id, diagnostic) in diagnostics.into_iter().enumerate() {
+    for diagnostic in diagnostics {
         let (Some(path), Some(range)) = (&diagnostic.path, diagnostic.range) else {
             continue;
         };
-        let point =
-            |(row, column): (usize, usize)| Unclipped(PointUtf16::new(row as u32, column as u32));
+        let position =
+            |(line, column): (usize, usize)| lsp::Position::new(line as u32, column as u32);
         let mut message = diagnostic.message.clone();
         for hint in &diagnostic.hints {
             message.push_str("\nhint: ");
@@ -85,22 +101,16 @@ fn to_editor_diagnostics<'a>(
         by_path
             .entry(path.clone())
             .or_default()
-            .push(DiagnosticEntry::new(
-                point(range.start)..point(range.end),
-                EditorDiagnostic {
-                    source: Some("typst".to_string()),
-                    severity: match diagnostic.severity {
-                        Level::Error => DiagnosticSeverity::ERROR,
-                        Level::Warning => DiagnosticSeverity::WARNING,
-                    },
-                    message: DiagnosticMessage::plain(message),
-                    group_id,
-                    is_primary: true,
-                    source_kind: DiagnosticSourceKind::Other,
-                    underline: true,
-                    ..EditorDiagnostic::default()
-                },
-            ));
+            .push(lsp::Diagnostic {
+                range: lsp::Range::new(position(range.start), position(range.end)),
+                severity: Some(match diagnostic.severity {
+                    Level::Error => DiagnosticSeverity::ERROR,
+                    Level::Warning => DiagnosticSeverity::WARNING,
+                }),
+                source: Some("typst".to_string()),
+                message: message.into(),
+                ..lsp::Diagnostic::default()
+            });
     }
     by_path
 }
@@ -126,16 +136,16 @@ mod tests {
             Diagnostic::error("no location".to_string()),
             located("/a/lib.typ", (0, 0), (0, 2)),
         ];
-        let by_path = to_editor_diagnostics(&diagnostics);
+        let by_path = to_lsp_diagnostics(&diagnostics);
         assert_eq!(
             by_path.len(),
             2,
             "diagnostics without a location are skipped"
         );
         let main = &by_path[&PathBuf::from("/a/main.typ")][0];
-        assert_eq!(main.range.start.0, PointUtf16::new(3, 1));
-        assert_eq!(main.range.end.0, PointUtf16::new(3, 8));
-        assert_eq!(main.diagnostic.severity, DiagnosticSeverity::ERROR);
-        assert_eq!(main.diagnostic.message.as_str(), "broken\nhint: try this");
+        assert_eq!(main.range.start, lsp::Position::new(3, 1));
+        assert_eq!(main.range.end, lsp::Position::new(3, 8));
+        assert_eq!(main.severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(main.message.to_string(), "broken\nhint: try this");
     }
 }

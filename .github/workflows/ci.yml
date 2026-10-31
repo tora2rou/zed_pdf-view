@@ -41,5 +41,10 @@ jobs:
       - name: Clippy
         run: cargo clippy --no-deps --all-targets --locked -p pdf_core -p pdf_viewer -p pdf_view_app -p typst_build -p pdf_tab -p typst_ui -- -D warnings
 
+      # テスト用の機能(test-support)なしでも組めることを確かめる。テストだけ通っても、本体で使えない
+      # 関数を呼んでいることがある。
+      - name: Check without test features
+        run: cargo check --locked -p pdf_tab -p typst_ui
+
       - name: Test
         run: cargo test --locked -p pdf_core -p pdf_viewer -p pdf_view_app -p typst_build -p pdf_tab -p typst_ui
