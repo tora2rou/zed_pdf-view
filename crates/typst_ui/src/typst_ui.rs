@@ -15,10 +15,10 @@ mod preview;
 use std::path::{Path, PathBuf};
 
 use editor::Editor;
-use gpui::{App, AsyncWindowContext, Entity, EntityId, WeakEntity, actions};
+use gpui::{App, AsyncWindowContext, Context, Entity, EntityId, WeakEntity, Window, actions};
 use language::{Buffer, Point};
 use typst_build::SourcePosition;
-use workspace::Workspace;
+use workspace::{ItemHandle, Pane, Workspace};
 
 pub use diagnostics_panel::{ToggleDiagnosticsPanel, TypstDiagnosticsPanel};
 pub use document::{PdfRequest, TypstDocument, TypstDocumentEvent};
@@ -43,17 +43,48 @@ fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &OpenPreview, window, cx| {
         if let Some(main) = active_typst_file(workspace, cx) {
             let pane = workspace.active_pane().clone();
-            preview::open_preview(workspace, main, pane, true, window, cx);
+            open_preview_in_pane(workspace, main, pane, window, cx);
         }
     });
     workspace.register_action(|workspace, _: &OpenPreviewToTheSide, window, cx| {
         if let Some(main) = active_typst_file(workspace, cx) {
             let origin = workspace.active_pane().clone();
-            let pane = workspace.adjacent_pane_of(&origin, window, cx);
-            preview::open_preview(workspace, main, pane, false, window, cx);
+            open_preview_to_the_side_of_pane(workspace, main, origin, window, cx);
         }
     });
     diagnostics_panel::register(workspace);
+}
+
+/// Opens (or switches to) the preview of `main` in `pane`, and focuses it.
+pub fn open_preview_in_pane(
+    workspace: &mut Workspace,
+    main: PathBuf,
+    pane: Entity<Pane>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    preview::open_preview(workspace, main, pane, true, window, cx);
+}
+
+/// Opens the preview of `main` in the pane next to `origin`, keeping the focus in the editor.
+pub fn open_preview_to_the_side_of_pane(
+    workspace: &mut Workspace,
+    main: PathBuf,
+    origin: Entity<Pane>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let pane = workspace.adjacent_pane_of(&origin, window, cx);
+    preview::open_preview(workspace, main, pane, false, window, cx);
+    // Creating the neighboring pane moves the focus there; give it back to the editor.
+    origin.update(cx, |origin, cx| origin.focus_active_item(window, cx));
+}
+
+/// The path of the Typst file shown by `item`, if it is an editor of one.
+pub fn typst_file_of(item: &dyn ItemHandle, cx: &App) -> Option<PathBuf> {
+    let editor = item.act_as::<Editor>(cx)?;
+    let buffer = editor.read(cx).buffer().read(cx).as_singleton()?;
+    buffer_abs_path(&buffer, cx).filter(|path| is_typst(path))
 }
 
 fn is_typst(path: &Path) -> bool {
@@ -72,9 +103,7 @@ fn normalize(path: &Path) -> PathBuf {
 
 /// The path of the Typst file in the active editor, if any.
 fn active_typst_file(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
-    let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
-    let buffer = editor.read(cx).buffer().read(cx).as_singleton()?;
-    buffer_abs_path(&buffer, cx).filter(|path| is_typst(path))
+    typst_file_of(workspace.active_item(cx)?.as_ref(), cx)
 }
 
 /// Opens the source file and moves the cursor to `position`. The file opens in a pane that does
@@ -222,12 +251,12 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             let main = active_typst_file(workspace, cx).expect("a Typst editor is active");
             let origin = workspace.active_pane().clone();
-            let pane = workspace.adjacent_pane_of(&origin, window, cx);
-            preview::open_preview(workspace, main, pane.clone(), false, window, cx);
-            pane.read(cx)
-                .items_of_type::<TypstPreview>()
-                .next()
-                .unwrap()
+            open_preview_to_the_side_of_pane(workspace, main, origin, window, cx);
+            workspace
+                .panes()
+                .iter()
+                .find_map(|pane| pane.read(cx).items_of_type::<TypstPreview>().next())
+                .expect("a preview was opened")
         })
     }
 
@@ -379,6 +408,36 @@ mod tests {
         assert!(panel.read_with(cx, |panel, _| panel.document.is_none()));
         assert!(weak.upgrade().is_none(), "the document is released");
         assert_eq!(error_count(cx), 0, "the underlines are removed");
+    }
+
+    /// What the preview button in the editor toolbar relies on: only Typst editors get the button,
+    /// and a click opens the preview beside the editor while the editor keeps the focus.
+    #[gpui::test]
+    async fn the_preview_button_opens_the_preview_beside_the_editor(cx: &mut TestAppContext) {
+        let (main, workspace, editor, cx) =
+            open_main("button", &format!("{PAGE}= One\n"), cx).await;
+        let found = cx.update(|_, cx| typst_file_of(&editor, cx));
+        assert_eq!(found, Some(main));
+
+        let preview = open_preview_beside(&workspace, cx);
+        settle(cx);
+        let found = cx.update(|_, cx| typst_file_of(&preview, cx));
+        assert_eq!(found, None, "the preview itself has no button");
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.panes().len(),
+                2,
+                "the preview opened in a new pane"
+            );
+            let editor_pane = workspace.pane_for(&editor).unwrap();
+            let preview_pane = workspace.pane_for(&preview).unwrap();
+            assert_ne!(editor_pane, preview_pane);
+            assert_eq!(
+                workspace.active_item(cx).map(|item| item.item_id()),
+                Some(editor.entity_id()),
+                "the editor keeps the focus"
+            );
+        });
     }
 
     #[gpui::test]
