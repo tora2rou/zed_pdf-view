@@ -4,28 +4,19 @@
 //! shown with Chihayaburu's `PdfView`. Ctrl/Cmd-clicking the preview jumps to the source that
 //! produced the clicked text.
 
-use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+mod document;
+mod preview;
+
+use std::path::{Path, PathBuf};
 
 use editor::Editor;
-use file_icons::FileIcons;
-use gpui::{
-    App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Task, WeakEntity,
-    Window, actions, div,
-};
-use language::{Buffer, BufferEvent, Point};
-use parking_lot::Mutex;
-use pdf_core::PdfDocument;
-use pdf_viewer::{PdfView, PdfViewEvent};
-use project::{Project, buffer_store::BufferStoreEvent};
-use typst_build::{Diagnostic, Session, SourcePosition};
-use ui::prelude::*;
-use workspace::{Pane, Workspace, item::Item};
+use gpui::{App, AsyncWindowContext, Entity, EntityId, WeakEntity, actions};
+use language::{Buffer, Point};
+use typst_build::SourcePosition;
+use workspace::Workspace;
+
+pub use document::{PdfRequest, TypstDocument, TypstDocumentEvent};
+pub use preview::TypstPreview;
 
 actions!(
     typst,
@@ -37,9 +28,6 @@ actions!(
     ]
 );
 
-/// How long the text must stay unchanged before it is compiled.
-const DEBOUNCE: Duration = Duration::from_millis(300);
-
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| register(workspace))
         .detach();
@@ -49,14 +37,14 @@ fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &OpenPreview, window, cx| {
         if let Some(main) = active_typst_file(workspace, cx) {
             let pane = workspace.active_pane().clone();
-            open_preview(workspace, main, pane, true, window, cx);
+            preview::open_preview(workspace, main, pane, true, window, cx);
         }
     });
     workspace.register_action(|workspace, _: &OpenPreviewToTheSide, window, cx| {
         if let Some(main) = active_typst_file(workspace, cx) {
             let origin = workspace.active_pane().clone();
             let pane = workspace.adjacent_pane_of(&origin, window, cx);
-            open_preview(workspace, main, pane, false, window, cx);
+            preview::open_preview(workspace, main, pane, false, window, cx);
         }
     });
 }
@@ -75,331 +63,54 @@ fn normalize(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// The path of the Typst file in the active editor, if any.
 fn active_typst_file(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
     let buffer = editor.read(cx).buffer().read(cx).as_singleton()?;
     buffer_abs_path(&buffer, cx).filter(|path| is_typst(path))
 }
 
-fn open_preview(
-    workspace: &mut Workspace,
-    main: PathBuf,
-    pane: Entity<Pane>,
-    focus: bool,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    let existing = pane
-        .read(cx)
-        .items_of_type::<TypstPreview>()
-        .find(|preview| preview.read(cx).main == main);
-    if let Some(existing) = existing {
-        pane.update(cx, |pane, cx| {
-            if let Some(index) = pane.index_for_item(&existing) {
-                pane.activate_item(index, true, focus, window, cx);
-            }
-        });
-        return;
-    }
-    let project = workspace.project().clone();
-    let workspace_handle = workspace.weak_handle();
-    let preview = cx.new(|cx| TypstPreview::new(main, project, workspace_handle, window, cx));
-    pane.update(cx, |pane, cx| {
-        pane.add_item(Box::new(preview), focus, focus, None, window, cx)
-    });
-}
-
-/// A tab that shows the compiled output of one Typst document and keeps it up to date.
-pub struct TypstPreview {
-    main: PathBuf,
-    project: Entity<Project>,
+/// Opens the source file and moves the cursor to `position`. The file opens in a pane that does
+/// not contain `avoid_item` (the preview the user clicked), when there is one.
+async fn go_to_source(
     workspace: WeakEntity<Workspace>,
-    session: Option<Arc<Mutex<Session>>>,
-    viewer: Option<Entity<PdfView>>,
-    focus_handle: FocusHandle,
-    /// Files read by the last compilation (resolved paths). Edits to these trigger a recompile.
-    dependencies: HashSet<PathBuf>,
-    errors: Vec<Diagnostic>,
-    warnings: Vec<Diagnostic>,
-    compiling: bool,
-    /// An edit arrived while compiling, so compile again once the current run finishes.
-    recompile: bool,
-    buffer_subscriptions: HashMap<EntityId, Subscription>,
-    _subscriptions: Vec<Subscription>,
-    debounce: Task<()>,
-    compile_task: Task<()>,
-    jump_task: Task<()>,
-}
-
-impl TypstPreview {
-    fn new(
-        main: PathBuf,
-        project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let (session, errors) = match Session::new(&main) {
-            Ok(session) => (Some(Arc::new(Mutex::new(session))), Vec::new()),
-            Err(failure) => (None, failure.errors),
-        };
-        let buffer_store = project.read(cx).buffer_store().clone();
-        let buffers_added = cx.subscribe_in(
-            &buffer_store,
-            window,
-            |this, _, event: &BufferStoreEvent, window, cx| {
-                if let BufferStoreEvent::BufferAdded(_) = event {
-                    this.watch_buffers(window, cx);
-                }
-            },
-        );
-        let mut this = Self {
-            dependencies: HashSet::from([normalize(&main)]),
-            main,
-            project,
-            workspace,
-            session,
-            viewer: None,
-            focus_handle: cx.focus_handle(),
-            errors,
-            warnings: Vec::new(),
-            compiling: false,
-            recompile: false,
-            buffer_subscriptions: HashMap::new(),
-            _subscriptions: vec![buffers_added],
-            debounce: Task::ready(()),
-            compile_task: Task::ready(()),
-            jump_task: Task::ready(()),
-        };
-        this.watch_buffers(window, cx);
-        this.compile(window, cx);
-        this
-    }
-
-    /// Open buffers of the files this document depends on, with their resolved paths.
-    fn dependency_buffers(&self, cx: &App) -> Vec<(Entity<Buffer>, PathBuf)> {
-        self.project
+    position: SourcePosition,
+    avoid_item: Option<EntityId>,
+    cx: &mut AsyncWindowContext,
+) {
+    let open = workspace.update_in(cx, |workspace, window, cx| {
+        let project_path = workspace
+            .project()
             .read(cx)
-            .buffer_store()
-            .read(cx)
-            .buffers()
-            .filter_map(|buffer| {
-                let path = normalize(&buffer_abs_path(&buffer, cx)?);
-                self.dependencies.contains(&path).then_some((buffer, path))
-            })
-            .collect()
-    }
-
-    /// Subscribes to edits of the open buffers this document depends on.
-    fn watch_buffers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let buffers = self.dependency_buffers(cx);
-        let watched: HashSet<EntityId> = buffers
+            .find_project_path(&position.path, cx)?;
+        let pane = workspace
+            .panes()
             .iter()
-            .map(|(buffer, _)| buffer.entity_id())
-            .collect();
-        self.buffer_subscriptions
-            .retain(|id, _| watched.contains(id));
-        for (buffer, _) in buffers {
-            self.buffer_subscriptions
-                .entry(buffer.entity_id())
-                .or_insert_with(|| {
-                    cx.subscribe_in(
-                        &buffer,
-                        window,
-                        |this, _, event: &BufferEvent, window, cx| {
-                            if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
-                                this.schedule_compile(window, cx);
-                            }
-                        },
-                    )
-                });
-        }
-    }
-
-    fn schedule_compile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.debounce = cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor().timer(DEBOUNCE).await;
-            this.update_in(cx, |this, window, cx| this.compile(window, cx))
-                .ok();
-        });
-    }
-
-    fn compile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(session) = self.session.clone() else {
-            return;
-        };
-        if self.compiling {
-            self.recompile = true;
-            return;
-        }
-        // Only unsaved text needs to be passed; everything else is read from disk.
-        let overlays: HashMap<PathBuf, String> = self
-            .dependency_buffers(cx)
-            .into_iter()
-            .filter(|(buffer, _)| buffer.read(cx).is_dirty())
-            .map(|(buffer, path)| (path, buffer.read(cx).text()))
-            .collect();
-        self.compiling = true;
-        cx.notify();
-
-        let compile = cx.background_spawn(async move {
-            let result = session.lock().compile(overlays, true);
-            result.map(|compiled| {
-                let document = PdfDocument::from_bytes(compiled.pdf).map(Arc::new);
-                (document, compiled.warnings, compiled.dependencies)
+            .find(|pane| {
+                pane.read(cx)
+                    .items()
+                    .all(|item| Some(item.item_id()) != avoid_item)
             })
-        });
-        self.compile_task = cx.spawn_in(window, async move |this, cx| {
-            let result = compile.await;
-            this.update_in(cx, |this, window, cx| {
-                this.compiling = false;
-                let dependencies = match result {
-                    Ok((Ok(document), warnings, dependencies)) => {
-                        this.show(document, window, cx);
-                        this.errors.clear();
-                        this.warnings = warnings;
-                        dependencies
-                    }
-                    Ok((Err(error), warnings, dependencies)) => {
-                        this.errors = vec![Diagnostic::error(format!(
-                            "The compiled PDF could not be opened: {error}"
-                        ))];
-                        this.warnings = warnings;
-                        dependencies
-                    }
-                    Err(failure) => {
-                        this.errors = failure.errors;
-                        this.warnings = failure.warnings;
-                        failure.dependencies
-                    }
+            .map(|pane| pane.downgrade());
+        Some(workspace.open_path(project_path, pane, true, window, cx))
+    });
+    let Ok(Some(open)) = open else {
+        return;
+    };
+    let Ok(item) = open.await else {
+        return;
+    };
+    if let Some(editor) = item.downcast::<Editor>() {
+        editor
+            .update_in(cx, |editor, window, cx| {
+                let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+                    return;
                 };
-                this.dependencies = dependencies.iter().map(|path| normalize(path)).collect();
-                this.dependencies.insert(normalize(&this.main));
-                this.watch_buffers(window, cx);
-                if std::mem::take(&mut this.recompile) {
-                    this.compile(window, cx);
-                }
-                cx.notify();
+                let point = buffer_point(&buffer.read(cx).text_snapshot(), &position);
+                editor.go_to_singleton_buffer_point(point, window, cx);
             })
             .ok();
-        });
     }
-
-    fn show(&mut self, document: Arc<PdfDocument>, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(viewer) = &self.viewer {
-            viewer.update(cx, |viewer, cx| {
-                viewer.update_document(document, window, cx)
-            });
-            return;
-        }
-        let viewer = cx.new(|cx| PdfView::new(document, cx));
-        let subscription = cx.subscribe_in(&viewer, window, Self::on_viewer_event);
-        self._subscriptions.push(subscription);
-        let had_focus = self.focus_handle.is_focused(window);
-        self.viewer = Some(viewer.clone());
-        if had_focus {
-            window.focus(&viewer.focus_handle(cx), cx);
-        }
-    }
-
-    fn on_viewer_event(
-        &mut self,
-        _viewer: &Entity<PdfView>,
-        event: &PdfViewEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let PdfViewEvent::ModifiedClick { page, x, y } = *event;
-        let Some(session) = self.session.clone() else {
-            return;
-        };
-        // The session is locked while compiling, so look the position up off the UI thread.
-        let lookup = cx.background_spawn(async move { session.lock().source_at(page, x, y) });
-        let workspace = self.workspace.clone();
-        let preview_id = cx.entity_id();
-        self.jump_task = cx.spawn_in(window, async move |_, cx| {
-            let Some(position) = lookup.await else {
-                return;
-            };
-            let open = workspace.update_in(cx, |workspace, window, cx| {
-                open_source(workspace, &position, preview_id, window, cx)
-            });
-            let Ok(Some(open)) = open else {
-                return;
-            };
-            let Ok(item) = open.await else {
-                return;
-            };
-            if let Some(editor) = item.downcast::<Editor>() {
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
-                            return;
-                        };
-                        let point = buffer_point(&buffer.read(cx).text_snapshot(), &position);
-                        editor.go_to_singleton_buffer_point(point, window, cx);
-                    })
-                    .ok();
-            }
-        });
-    }
-
-    fn file_name(&self) -> String {
-        self.main
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    }
-
-    fn render_status(&self, cx: &App) -> Option<impl IntoElement> {
-        let (text, color) = if let Some(first) = self.errors.first() {
-            let more = match self.errors.len() {
-                1 => String::new(),
-                count => format!(" (+{} more)", count - 1),
-            };
-            (format!("{}{more}", first.one_line()), Color::Error)
-        } else if self.compiling && self.viewer.is_none() {
-            ("Compiling…".to_string(), Color::Muted)
-        } else if !self.warnings.is_empty() {
-            let count = self.warnings.len();
-            let noun = if count == 1 { "warning" } else { "warnings" };
-            (format!("{count} {noun}"), Color::Warning)
-        } else {
-            return None;
-        };
-        Some(
-            div()
-                .px_2()
-                .py_1()
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
-                .child(Label::new(text).color(color).single_line()),
-        )
-    }
-}
-
-/// Opens the source file, preferring a pane other than the one showing the preview.
-fn open_source(
-    workspace: &mut Workspace,
-    position: &SourcePosition,
-    preview_id: EntityId,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) -> Option<Task<anyhow::Result<Box<dyn workspace::ItemHandle>>>> {
-    let project_path = workspace
-        .project()
-        .read(cx)
-        .find_project_path(&position.path, cx)?;
-    let pane = workspace
-        .panes()
-        .iter()
-        .find(|pane| {
-            pane.read(cx)
-                .items()
-                .all(|item| item.item_id() != preview_id)
-        })
-        .map(|pane| pane.downgrade());
-    Some(workspace.open_path(project_path, pane, true, window, cx))
 }
 
 /// The buffer position of a compiler position. Typst counts columns in characters; Zed counts bytes.
@@ -421,54 +132,15 @@ fn byte_column(line: &str, chars: usize) -> usize {
         .map_or(line.len(), |(offset, _)| offset)
 }
 
-impl Render for TypstPreview {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .id("TypstPreview")
-            .key_context("TypstPreview")
-            .track_focus(&self.focus_handle)
-            .size_full()
-            .bg(cx.theme().colors().editor_background)
-            .children(self.render_status(cx))
-            .child(match &self.viewer {
-                Some(viewer) => div().flex_1().min_h_0().child(viewer.clone()),
-                None => div().flex_1(),
-            })
-    }
-}
-
-impl Focusable for TypstPreview {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match &self.viewer {
-            Some(viewer) => viewer.focus_handle(cx),
-            None => self.focus_handle.clone(),
-        }
-    }
-}
-
-impl EventEmitter<()> for TypstPreview {}
-
-impl Item for TypstPreview {
-    type Event = ();
-
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        format!("Preview {}", self.file_name()).into()
-    }
-
-    fn tab_tooltip_text(&self, _cx: &App) -> Option<SharedString> {
-        Some(self.main.to_string_lossy().into_owned().into())
-    }
-
-    fn tab_icon(&self, _window: &Window, cx: &App) -> Option<Icon> {
-        FileIcons::get_icon(&self.main, cx).map(Icon::from_path)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::DEBOUNCE;
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
+    use pdf_viewer::PdfViewEvent;
+    use project::Project;
+    use std::sync::Arc;
     use workspace::{AppState, MultiWorkspace};
 
     const PAGE: &str =
@@ -496,20 +168,38 @@ mod tests {
         Entity<Editor>,
         &'a mut VisualTestContext,
     ) {
+        open_project(name, &[("main.typ", text)], cx).await
+    }
+
+    /// Writes `files` both to a real temporary directory (the compiler reads the disk) and to the
+    /// fake file system the project uses, then opens `main.typ` in an editor.
+    async fn open_project<'a>(
+        name: &str,
+        files: &[(&str, &str)],
+        cx: &'a mut TestAppContext,
+    ) -> (
+        PathBuf,
+        Entity<Workspace>,
+        Entity<Editor>,
+        &'a mut VisualTestContext,
+    ) {
         init_test(cx);
         let dir = std::env::temp_dir().join(format!("typst_ui_{name}_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let dir = dir.canonicalize().unwrap();
-        let main = dir.join("main.typ");
-        std::fs::write(&main, text).unwrap();
+        let mut tree = serde_json::Map::new();
+        for (file, text) in files {
+            std::fs::write(dir.join(file), text).unwrap();
+            tree.insert(file.to_string(), serde_json::Value::from(*text));
+        }
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(&dir, serde_json::json!({ "main.typ": text }))
-            .await;
+        fs.insert_tree(&dir, serde_json::Value::Object(tree)).await;
         let project = Project::test(fs, [dir.as_path()], cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let main = dir.join("main.typ");
         let open = workspace.update_in(cx, |workspace, window, cx| {
             workspace.open_abs_path(main.clone(), Default::default(), window, cx)
         });
@@ -525,7 +215,7 @@ mod tests {
             let main = active_typst_file(workspace, cx).expect("a Typst editor is active");
             let origin = workspace.active_pane().clone();
             let pane = workspace.adjacent_pane_of(&origin, window, cx);
-            open_preview(workspace, main, pane.clone(), false, window, cx);
+            preview::open_preview(workspace, main, pane.clone(), false, window, cx);
             pane.read(cx)
                 .items_of_type::<TypstPreview>()
                 .next()
@@ -552,6 +242,53 @@ mod tests {
         });
     }
 
+    /// Without a preview, only errors are checked and no PDF is kept. A preview asks for the PDF.
+    #[gpui::test]
+    async fn the_pdf_is_only_made_while_a_preview_wants_it(cx: &mut TestAppContext) {
+        let (main, workspace, _, cx) =
+            open_main("check_only", &format!("{PAGE}#unknown()\n"), cx).await;
+        let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
+        let document = cx.update(|_, cx| TypstDocument::for_main(&main, &project, cx));
+        document.update(cx, |document, cx| document.ensure_compiled(cx));
+        settle(cx);
+        document.read_with(cx, |document, _| {
+            assert_eq!(document.errors().len(), 1);
+            assert!(document.pdf().is_none());
+        });
+
+        let preview = open_preview_beside(&workspace, cx);
+        settle(cx);
+        assert_eq!(
+            preview.read_with(cx, |preview, _| preview.document.clone()),
+            document,
+            "the preview shares the document"
+        );
+    }
+
+    /// An imported file belongs to the document that imports it.
+    #[gpui::test]
+    async fn an_imported_file_belongs_to_the_importing_document(cx: &mut TestAppContext) {
+        let (main, workspace, _, cx) = open_project(
+            "for_file",
+            &[
+                ("main.typ", "#import \"lib.typ\": f\n#f()\n"),
+                ("lib.typ", "#let f() = [x]\n"),
+            ],
+            cx,
+        )
+        .await;
+        let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
+        let document = cx.update(|_, cx| TypstDocument::for_main(&main, &project, cx));
+        document.update(cx, |document, cx| document.ensure_compiled(cx));
+        settle(cx);
+        let lib = main.with_file_name("lib.typ");
+        let found = cx.update(|_, cx| TypstDocument::for_file(&lib, &project, cx));
+        assert_eq!(found, document);
+        let other = main.with_file_name("other.typ");
+        let unrelated = cx.update(|_, cx| TypstDocument::for_file(&other, &project, cx));
+        assert_ne!(unrelated, document);
+    }
+
     #[gpui::test]
     async fn the_preview_follows_unsaved_edits(cx: &mut TestAppContext) {
         let (main, workspace, editor, cx) = open_main("edits", &format!("{PAGE}= One\n"), cx).await;
@@ -571,9 +308,10 @@ mod tests {
         // While the document is broken, the last good output stays visible.
         append(&editor, "#unknown()\n", cx);
         settle(cx);
-        preview.read_with(cx, |preview, _| {
-            assert_eq!(preview.errors.len(), 1, "{:?}", preview.errors);
-            assert_eq!(preview.errors[0].line, Some(6));
+        preview.read_with(cx, |preview, cx| {
+            let errors = preview.document.read(cx).errors();
+            assert_eq!(errors.len(), 1, "{errors:?}");
+            assert_eq!(errors[0].line, Some(6));
         });
         assert_eq!(page_count(&preview, cx), Some(2));
     }
