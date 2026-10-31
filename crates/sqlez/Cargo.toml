@@ -1,0 +1,28 @@
+[package]
+name = "sqlez"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+futures.workspace = true
+indoc.workspace = true
+libsqlite3-sys.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+path.workspace = true
+sqlformat.workspace = true
+thread_local = "1.1.4"
+uuid.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true

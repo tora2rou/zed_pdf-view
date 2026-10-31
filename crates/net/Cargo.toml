@@ -1,0 +1,23 @@
+[package]
+name = "net"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/net.rs"
+doctest = false
+
+[dependencies]
+smol.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+async-io.workspace = true
+windows = { workspace = true, features = ["Win32_Networking_WinSock"] }
+
+[dev-dependencies]
+tempfile.workspace = true

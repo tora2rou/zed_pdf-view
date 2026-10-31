@@ -1,0 +1,16 @@
+[package]
+name = "release_channel"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+semver.workspace = true

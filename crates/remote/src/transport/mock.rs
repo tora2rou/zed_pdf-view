@@ -1,0 +1,484 @@
+//! Mock transport for testing remote connections.
+//!
+//! This module provides a mock implementation of the `RemoteConnection` trait
+//! that allows testing remote editing functionality without actual SSH/WSL/Docker
+//! connections.
+//!
+//! # Usage
+//!
+//! ```rust,ignore
+//! use remote::{MockConnection, RemoteClient};
+//!
+//! #[gpui::test]
+//! async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+//!     let (opts, server_session) = MockConnection::new(cx, server_cx);
+//!
+//!     // Create the headless project (server side)
+//!     server_cx.update(HeadlessProject::init);
+//!     let _headless = server_cx.new(|cx| {
+//!         HeadlessProject::new(
+//!             HeadlessAppState { session: server_session, /* ... */ },
+//!             false,
+//!             cx,
+//!         )
+//!     });
+//!
+//!     // Create the client using the helper
+//!     let (client, server_client) = RemoteClient::new_mock(cx, server_cx).await;
+//!     // ... test logic ...
+//! }
+//! ```
+
+use crate::{
+    command::RemoteCommand,
+    remote_client::{
+        ChannelClient, CommandTemplate, Interactive, RemoteClientDelegate, RemoteConnection,
+        RemoteConnectionOptions,
+    },
+};
+use anyhow::Result;
+use async_trait::async_trait;
+use collections::HashMap;
+use futures::{
+    FutureExt, SinkExt, StreamExt,
+    channel::{
+        mpsc::{self, Sender},
+        oneshot,
+    },
+    select_biased,
+};
+use gpui::{App, AppContext as _, AsyncApp, Global, Task, TestAppContext};
+use rpc::{AnyProtoClient, proto::Envelope};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
+use util::paths::{PathStyle, RemotePathBuf};
+
+/// Unique identifier for a mock connection.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct MockConnectionOptions {
+    pub id: u64,
+}
+
+/// A mock implementation of `RemoteConnection` for testing.
+pub struct MockRemoteConnection {
+    options: MockConnectionOptions,
+    server_channel: Arc<ChannelClient>,
+    server_cx: SendableCx,
+    pub(crate) proxy_tx: parking_lot::Mutex<
+        Option<
+            mpsc::UnboundedSender<(
+                mpsc::UnboundedSender<Envelope>,
+                mpsc::UnboundedReceiver<Envelope>,
+            )>,
+        >,
+    >,
+}
+
+/// Wrapper to pass `AsyncApp` across thread boundaries in tests.
+///
+/// # Safety
+///
+/// This is safe because in test mode, GPUI is always single-threaded and so
+/// having access to one async app means being on the same main thread.
+pub(crate) struct SendableCx(AsyncApp);
+
+impl SendableCx {
+    pub(crate) fn new(cx: &TestAppContext) -> Self {
+        Self(cx.to_async())
+    }
+
+    pub(crate) fn get(&self, _: &AsyncApp) -> AsyncApp {
+        self.0.clone()
+    }
+}
+
+// SAFETY: In test mode, GPUI is always single-threaded, and SendableCx
+// is only accessed from the main thread via the get() method which
+// requires a valid AsyncApp reference.
+unsafe impl Send for SendableCx {}
+unsafe impl Sync for SendableCx {}
+
+/// Global registry that holds pre-created mock connections.
+///
+/// When `ConnectionPool::connect` is called with `MockConnectionOptions`,
+/// it retrieves the connection from this registry.
+#[derive(Default)]
+pub struct MockConnectionRegistry {
+    pending: HashMap<u64, (oneshot::Receiver<()>, Arc<MockRemoteConnection>)>,
+}
+
+impl Global for MockConnectionRegistry {}
+
+impl MockConnectionRegistry {
+    /// Called by `ConnectionPool::connect` to retrieve a pre-registered mock connection.
+    pub fn take(
+        &mut self,
+        opts: &MockConnectionOptions,
+    ) -> Option<impl Future<Output = Arc<MockRemoteConnection>> + use<>> {
+        let (guard, con) = self.pending.remove(&opts.id)?;
+        Some(async move {
+            _ = guard.await;
+            con
+        })
+    }
+}
+
+/// Helper for creating mock connection pairs in tests.
+pub struct MockConnection;
+
+pub type ConnectGuard = oneshot::Sender<()>;
+
+impl MockConnection {
+    /// Creates a new mock connection pair for testing.
+    ///
+    /// This function:
+    /// 1. Creates a unique `MockConnectionOptions` identifier
+    /// 2. Sets up the server-side channel (returned as `AnyProtoClient`)
+    /// 3. Creates a `MockRemoteConnection` and registers it in the global registry
+    /// 4. The connection will be retrieved from the registry when `ConnectionPool::connect` is called
+    ///
+    /// Returns:
+    /// - `MockConnectionOptions` to pass to `remote::connect()` or `RemoteClient` creation
+    /// - `AnyProtoClient` to pass to `HeadlessProject::new()` as the session
+    ///
+    /// # Arguments
+    /// - `client_cx`: The test context for the client side
+    /// - `server_cx`: The test context for the server/headless side
+    pub(crate) fn new(
+        client_cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> (MockConnectionOptions, AnyProtoClient, ConnectGuard) {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+        let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+        let opts = MockConnectionOptions { id };
+        let (server_client, connect_guard) =
+            Self::new_with_opts(opts.clone(), client_cx, server_cx);
+        (opts, server_client, connect_guard)
+    }
+
+    /// Creates a mock connection pair for existing `MockConnectionOptions`.
+    ///
+    /// This is useful when simulating reconnection: after a connection is torn
+    /// down, register a new mock server under the same options so the next
+    /// `ConnectionPool::connect` call finds it.
+    pub(crate) fn new_with_opts(
+        opts: MockConnectionOptions,
+        client_cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> (AnyProtoClient, ConnectGuard) {
+        let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
+        let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let server_client = server_cx
+            .update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "mock-server", false));
+
+        let connection = Arc::new(MockRemoteConnection {
+            options: opts.clone(),
+            server_channel: server_client.clone(),
+            server_cx: SendableCx::new(server_cx),
+            proxy_tx: Default::default(),
+        });
+
+        let (tx, rx) = oneshot::channel();
+
+        client_cx.update(|cx| {
+            cx.default_global::<MockConnectionRegistry>()
+                .pending
+                .insert(opts.id, (rx, connection));
+        });
+
+        (server_client.into(), tx)
+    }
+}
+
+#[async_trait(?Send)]
+impl RemoteConnection for MockRemoteConnection {
+    async fn kill(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn has_been_killed(&self) -> bool {
+        false
+    }
+
+    fn build_command(
+        &self,
+        program: Option<String>,
+        args: &[String],
+        env: &HashMap<String, String>,
+        _working_dir: Option<String>,
+        _port_forward: Option<(u16, String, u16)>,
+        _interactive: Interactive,
+    ) -> Result<CommandTemplate> {
+        let shell_program = program.unwrap_or_else(|| "sh".to_string());
+        let mut shell_args = Vec::new();
+        shell_args.push(shell_program);
+        shell_args.extend(args.iter().cloned());
+        Ok(CommandTemplate {
+            program: "mock".into(),
+            args: shell_args,
+            env: env.clone(),
+        })
+    }
+
+    fn build_stdio_command(&self, command: RemoteCommand) -> Result<(CommandTemplate, Vec<u8>)> {
+        stdio_bootstrap_command(command)
+    }
+
+    fn build_forward_ports_command(
+        &self,
+        forwards: Vec<(u16, String, u16)>,
+    ) -> Result<CommandTemplate> {
+        Ok(CommandTemplate {
+            program: "mock".into(),
+            args: std::iter::once("-N".to_owned())
+                .chain(forwards.into_iter().map(|(local_port, host, remote_port)| {
+                    format!("{local_port}:{host}:{remote_port}")
+                }))
+                .collect(),
+            env: Default::default(),
+        })
+    }
+
+    fn upload_directory(
+        &self,
+        _src_path: PathBuf,
+        _dest_path: RemotePathBuf,
+        _cx: &App,
+    ) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn connection_options(&self) -> RemoteConnectionOptions {
+        RemoteConnectionOptions::Mock(self.options.clone())
+    }
+
+    fn simulate_disconnect(&self, cx: &AsyncApp) {
+        let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
+        let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
+        drop(
+            self.server_channel
+                .reconnect(incoming_rx, outgoing_tx, &self.server_cx.get(cx)),
+        );
+    }
+
+    fn start_proxy(
+        &self,
+        _unique_identifier: String,
+        _reconnect: bool,
+        mut client_incoming_tx: mpsc::UnboundedSender<Envelope>,
+        mut client_outgoing_rx: mpsc::UnboundedReceiver<Envelope>,
+        mut connection_activity_tx: Sender<()>,
+        _delegate: Arc<dyn RemoteClientDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<i32>> {
+        if let Some(proxy_tx) = self.proxy_tx.lock().as_ref() {
+            proxy_tx
+                .unbounded_send((client_incoming_tx, client_outgoing_rx))
+                .unwrap();
+            return cx.background_spawn(async move {
+                let _connection_activity_tx = connection_activity_tx;
+                futures::future::pending().await
+            });
+        }
+
+        let (mut server_incoming_tx, server_incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (server_outgoing_tx, mut server_outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        drop(self.server_channel.reconnect(
+            server_incoming_rx,
+            server_outgoing_tx,
+            &self.server_cx.get(cx),
+        ));
+
+        cx.background_spawn(async move {
+            loop {
+                select_biased! {
+                    server_to_client = server_outgoing_rx.next().fuse() => {
+                        let Some(server_to_client) = server_to_client else {
+                            return Ok(1)
+                        };
+                        connection_activity_tx.try_send(()).ok();
+                        client_incoming_tx.send(server_to_client).await.ok();
+                    }
+                    client_to_server = client_outgoing_rx.next().fuse() => {
+                        let Some(client_to_server) = client_to_server else {
+                            return Ok(1)
+                        };
+                        server_incoming_tx.send(client_to_server).await.ok();
+                    }
+                }
+            }
+        })
+    }
+
+    fn path_style(&self) -> PathStyle {
+        PathStyle::local()
+    }
+
+    fn remote_platform(&self) -> crate::RemotePlatform {
+        crate::RemotePlatform {
+            os: crate::RemoteOs::Linux,
+            arch: crate::RemoteArch::X86_64,
+        }
+    }
+
+    fn remote_os_version(&self) -> Option<String> {
+        None
+    }
+
+    fn shell(&self) -> String {
+        "sh".to_owned()
+    }
+
+    fn default_system_shell(&self) -> String {
+        "sh".to_owned()
+    }
+
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
+}
+
+pub const MOCK_STDIO_FRAME_HEX: &str = "MOCK_STDIO_FRAME_HEX";
+
+fn stdio_bootstrap_command(command: RemoteCommand) -> Result<(CommandTemplate, Vec<u8>)> {
+    let payload = command.encode()?;
+    let script = format!(
+        "{MOCK_STDIO_FRAME_HEX}=\"$(command -p dd bs=1 count={} 2>/dev/null | command -p od -An -v -tx1 | command -p tr -d ' \\n')\" || exit 1; [ \"${{#{MOCK_STDIO_FRAME_HEX}}}\" -eq {} ] || {{ printf 'mock stdio bootstrap read %s hex digits, expected {}\\n' \"${{#{MOCK_STDIO_FRAME_HEX}}}\" >&2; exit 1; }}; export {MOCK_STDIO_FRAME_HEX}; exec \"$@\"",
+        payload.len(),
+        payload.len() * 2,
+        payload.len() * 2,
+    );
+    let mut args = vec![
+        String::from("-c"),
+        script,
+        String::from("sh"),
+        command.program,
+    ];
+    args.extend(command.args);
+    Ok((
+        CommandTemplate {
+            program: String::from("/bin/sh"),
+            args,
+            env: command.env,
+        },
+        payload,
+    ))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use futures::{AsyncReadExt as _, AsyncWriteExt as _};
+    use smol::process::{Command, Stdio};
+
+    #[test]
+    fn test_stdio_bootstrap_without_target_path() -> Result<()> {
+        smol::block_on(async {
+            let (template, payload) = stdio_bootstrap_command(RemoteCommand {
+                program: String::from("/bin/sh"),
+                args: vec![
+                    String::from("-c"),
+                    format!("printf '%s\\n' \"${MOCK_STDIO_FRAME_HEX}\"; exec /bin/cat"),
+                ],
+                env: HashMap::from_iter([(String::from("PATH"), String::from("/nonexistent"))]),
+                working_dir: None,
+            })?;
+            let expected_hex = payload
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            let message = b"{\"jsonrpc\":\"2.0\",\"id\":1}\n\0\xff";
+
+            let mut child = spawn(&template)?;
+            let mut stdin = child.stdin.take().unwrap();
+            stdin.write_all(&payload).await?;
+            stdin.write_all(message).await?;
+            drop(stdin);
+            let output = child.output().await?;
+            assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+            assert!(output.status.success());
+            assert_eq!(
+                output.stdout,
+                [expected_hex.as_bytes(), b"\n", message].concat()
+            );
+
+            let mut child = spawn(&template)?;
+            let mut stdin = child.stdin.take().unwrap();
+            stdin.write_all(&payload[..payload.len() / 2]).await?;
+            drop(stdin);
+            let mut stdout = Vec::new();
+            child
+                .stdout
+                .take()
+                .unwrap()
+                .read_to_end(&mut stdout)
+                .await?;
+            let output = child.output().await?;
+            assert_eq!(output.status.code(), Some(1));
+            assert_eq!(stdout, b"");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stderr),
+                format!(
+                    "mock stdio bootstrap read {} hex digits, expected {}\n",
+                    payload.len() / 2 * 2,
+                    payload.len() * 2
+                )
+            );
+            Ok(())
+        })
+    }
+
+    fn spawn(template: &CommandTemplate) -> Result<smol::process::Child> {
+        Ok(Command::new(&template.program)
+            .args(&template.args)
+            .env_clear()
+            .envs(&template.env)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?)
+    }
+}
+
+/// Mock delegate for tests that don't need delegate functionality.
+pub struct MockDelegate;
+
+impl RemoteClientDelegate for MockDelegate {
+    fn ask_password(
+        &self,
+        _prompt: String,
+        _sender: futures::channel::oneshot::Sender<askpass::EncryptedPassword>,
+        _cancellation: futures::channel::oneshot::Receiver<()>,
+        _cx: &mut AsyncApp,
+    ) {
+        unreachable!("MockDelegate::ask_password should not be called in tests")
+    }
+
+    fn download_server_binary_locally(
+        &self,
+        _platform: crate::RemotePlatform,
+        _release_channel: release_channel::ReleaseChannel,
+        _version: Option<semver::Version>,
+        _cx: &mut AsyncApp,
+    ) -> Task<Result<PathBuf>> {
+        unreachable!("MockDelegate::download_server_binary_locally should not be called in tests")
+    }
+
+    fn get_download_url(
+        &self,
+        _platform: crate::RemotePlatform,
+        _release_channel: release_channel::ReleaseChannel,
+        _version: Option<semver::Version>,
+        _cx: &mut AsyncApp,
+    ) -> Task<Result<Option<String>>> {
+        unreachable!("MockDelegate::get_download_url should not be called in tests")
+    }
+
+    fn set_status(&self, _status: Option<&str>, _cx: &mut AsyncApp) {}
+}

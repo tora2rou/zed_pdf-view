@@ -1,0 +1,792 @@
+use std::borrow::Cow;
+use std::ffi::OsStr;
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use anyhow::{Context as _, Result, anyhow, bail};
+use cloud_api_types::ExtensionProvides;
+use collections::{BTreeMap, BTreeSet, HashMap};
+use fs::Fs;
+use futures::StreamExt as _;
+use language::{LanguageConfig, LanguageName};
+use lsp::LanguageServerName;
+use path::PathExt as _;
+use semver::Version;
+use serde::{Deserialize, Serialize};
+use util::paths::PathStyle;
+use util::rel_path::{RelPath, RelPathBuf};
+
+use crate::ExtensionCapability;
+
+/// This is the old version of the extension manifest, from when it was `extension.json`.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct OldExtensionManifest {
+    pub name: String,
+    pub version: Arc<str>,
+
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub authors: Vec<String>,
+
+    #[serde(default)]
+    pub themes: BTreeMap<Arc<str>, RelPathBuf>,
+    #[serde(default)]
+    pub languages: BTreeMap<Arc<str>, RelPathBuf>,
+    #[serde(default)]
+    pub grammars: BTreeMap<Arc<str>, RelPathBuf>,
+}
+
+/// The schema version of the [`ExtensionManifest`].
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
+pub struct SchemaVersion(pub i32);
+
+impl fmt::Display for SchemaVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl SchemaVersion {
+    pub const ZERO: Self = Self(0);
+    /// The latest schema version supported by Zed.
+    pub const CURRENT: Self = Self(1);
+
+    pub fn is_v0(&self) -> bool {
+        self == &Self::ZERO
+    }
+}
+
+// TODO: We should change this to just always be a Vec<PathBuf> once we bump the
+// extension.toml schema version to 2
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExtensionSnippets {
+    Single(PathBuf),
+    Multiple(Vec<PathBuf>),
+}
+
+impl ExtensionSnippets {
+    pub fn paths(&self) -> impl Iterator<Item = &PathBuf> {
+        match self {
+            ExtensionSnippets::Single(path) => std::slice::from_ref(path).iter(),
+            ExtensionSnippets::Multiple(paths) => paths.iter(),
+        }
+    }
+}
+
+impl From<&str> for ExtensionSnippets {
+    fn from(value: &str) -> Self {
+        ExtensionSnippets::Single(value.into())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct ExtensionManifest {
+    pub id: Arc<str>,
+    pub name: String,
+    pub version: Arc<str>,
+    pub schema_version: SchemaVersion,
+
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub authors: Vec<String>,
+    #[serde(default)]
+    pub lib: LibManifestEntry,
+
+    #[serde(default)]
+    pub themes: Vec<RelPathBuf>,
+    #[serde(default)]
+    pub icon_themes: Vec<RelPathBuf>,
+    #[serde(default)]
+    pub languages: Vec<RelPathBuf>,
+    #[serde(default)]
+    pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
+    #[serde(default)]
+    pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
+    #[serde(default)]
+    pub context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
+    #[serde(default)]
+    pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
+    #[serde(default)]
+    pub snippets: Option<ExtensionSnippets>,
+    #[serde(default)]
+    pub capabilities: Vec<ExtensionCapability>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub debug_adapters: BTreeMap<Arc<str>, DebugAdapterManifestEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub language_model_providers: BTreeMap<Arc<str>, LanguageModelProviderManifestEntry>,
+}
+
+impl ExtensionManifest {
+    /// Returns the set of features provided by the extension.
+    pub fn provides(&self) -> BTreeSet<ExtensionProvides> {
+        let mut provides = BTreeSet::default();
+        if !self.themes.is_empty() {
+            provides.insert(ExtensionProvides::Themes);
+        }
+
+        if !self.icon_themes.is_empty() {
+            provides.insert(ExtensionProvides::IconThemes);
+        }
+
+        if !self.languages.is_empty() {
+            provides.insert(ExtensionProvides::Languages);
+        }
+
+        if !self.grammars.is_empty() {
+            provides.insert(ExtensionProvides::Grammars);
+        }
+
+        if !self.language_servers.is_empty() {
+            provides.insert(ExtensionProvides::LanguageServers);
+        }
+
+        if !self.context_servers.is_empty() {
+            provides.insert(ExtensionProvides::ContextServers);
+        }
+
+        if self.snippets.is_some() {
+            provides.insert(ExtensionProvides::Snippets);
+        }
+
+        if !self.debug_adapters.is_empty() {
+            provides.insert(ExtensionProvides::DebugAdapters);
+        }
+
+        provides
+    }
+
+    pub fn allow_exec(
+        &self,
+        desired_command: &str,
+        desired_args: &[impl AsRef<str> + std::fmt::Debug],
+    ) -> Result<()> {
+        let is_allowed = self.capabilities.iter().any(|capability| match capability {
+            ExtensionCapability::ProcessExec(capability) => {
+                capability.allows(desired_command, desired_args)
+            }
+            _ => false,
+        });
+
+        if !is_allowed {
+            bail!(
+                "capability for process:exec {desired_command} {desired_args:?} was not listed in the extension manifest",
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn allow_remote_load(&self) -> bool {
+        self.remote_load().is_some()
+    }
+
+    pub fn remote_load(&self) -> Option<RemoteLoad<'_>> {
+        (!self.language_servers.is_empty()
+            || !self.debug_adapters.is_empty()
+            || !self.debug_locators.is_empty())
+        .then_some(RemoteLoad { manifest: self })
+    }
+}
+
+pub struct RemoteLoad<'a> {
+    manifest: &'a ExtensionManifest,
+}
+
+impl RemoteLoad<'_> {
+    pub fn language_dependencies(&self) -> impl Iterator<Item = LanguageName> + '_ {
+        self.manifest
+            .language_servers
+            .values()
+            .flat_map(|language_server_config| language_server_config.languages())
+    }
+}
+
+pub fn build_debug_adapter_schema_path(
+    adapter_name: &Arc<str>,
+    meta: &DebugAdapterManifestEntry,
+) -> anyhow::Result<RelPathBuf> {
+    match &meta.schema_path {
+        Some(path) => Ok(path.clone()),
+        None => RelPath::new(
+            &Path::new("debug_adapter_schemas")
+                .join(Path::new(adapter_name.as_ref()).with_extension("json")),
+            PathStyle::local(),
+        )
+        .map(Cow::into_owned),
+    }
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct LibManifestEntry {
+    pub kind: Option<ExtensionLibraryKind>,
+    pub version: Option<Version>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub enum ExtensionLibraryKind {
+    Rust,
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct GrammarManifestEntry {
+    pub repository: String,
+    #[serde(alias = "commit")]
+    pub rev: String,
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct LanguageServerManifestEntry {
+    /// Deprecated in favor of `languages`.
+    #[serde(default)]
+    language: Option<LanguageName>,
+    /// The list of languages this language server should work with.
+    #[serde(default)]
+    languages: Vec<LanguageName>,
+    #[serde(default)]
+    pub language_ids: HashMap<LanguageName, String>,
+    #[serde(default)]
+    pub code_action_kinds: Option<Vec<lsp::CodeActionKind>>,
+    /// Languages (from `languages`) for which this language server is not started
+    /// unless the user explicitly lists it in their `language_servers` setting.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    opt_in_languages: BTreeSet<LanguageName>,
+}
+
+impl LanguageServerManifestEntry {
+    /// Returns the list of languages for the language server.
+    ///
+    /// Prefer this over accessing the `language` or `languages` fields directly,
+    /// as we currently support both.
+    ///
+    /// We can replace this with just field access for the `languages` field once
+    /// we have removed `language`.
+    pub fn languages(&self) -> impl IntoIterator<Item = LanguageName> + '_ {
+        let language = if self.languages.is_empty() {
+            self.language.clone()
+        } else {
+            None
+        };
+        self.languages.iter().cloned().chain(language)
+    }
+
+    /// Returns the languages for which the language server is disabled by default.
+    pub fn opt_in_languages(&self) -> &BTreeSet<LanguageName> {
+        &self.opt_in_languages
+    }
+
+    /// Returns whether the language server should only be started for the given
+    /// language when the user explicitly enables it.
+    pub fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.opt_in_languages.contains(language)
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct ContextServerManifestEntry {}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct SlashCommandManifestEntry {
+    pub description: String,
+    pub requires_argument: bool,
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct DebugAdapterManifestEntry {
+    pub schema_path: Option<RelPathBuf>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct DebugLocatorManifestEntry {}
+
+/// Manifest entry for a language model provider.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct LanguageModelProviderManifestEntry {
+    /// Display name for the provider.
+    pub name: String,
+    /// Path to an SVG icon file relative to the extension root (e.g., "icons/provider.svg").
+    #[serde(default)]
+    pub icon: Option<String>,
+}
+
+impl ExtensionManifest {
+    pub async fn load(fs: Arc<dyn Fs>, extension_dir: &Path) -> Result<Self> {
+        let extension_name = extension_dir
+            .file_name()
+            .and_then(OsStr::to_str)
+            .context("invalid extension name")?;
+
+        let extension_manifest_path = extension_dir.join("extension.toml");
+        if fs.is_file(&extension_manifest_path).await {
+            let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
+                format!("loading {extension_name} extension.toml, {extension_manifest_path:?}")
+            })?;
+            toml::from_str(&manifest_content).map_err(|err| {
+                anyhow!("Invalid extension.toml for extension {extension_name}:\n{err}")
+            })
+        } else if let extension_manifest_path = extension_manifest_path.with_extension("json")
+            && fs.is_file(&extension_manifest_path).await
+        {
+            let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
+                format!("loading {extension_name} extension.json, {extension_manifest_path:?}")
+            })?;
+
+            serde_json::from_str::<OldExtensionManifest>(&manifest_content)
+                .with_context(|| format!("invalid extension.json for extension {extension_name}"))
+                .map(|manifest_json| manifest_from_old_manifest(manifest_json, extension_name))
+        } else {
+            anyhow::bail!("No extension manifest found for extension {extension_name}")
+        }
+    }
+
+    /// Fills in the parts of the manifest that are derived from the extension's
+    /// directory layout (languages, themes, icon themes, snippets, library kind).
+    pub async fn populate_defaults(
+        &mut self,
+        extension_path: &Path,
+        fs: Arc<dyn Fs>,
+    ) -> Result<()> {
+        // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
+        // contents of the computed fields, since we don't care what the existing values are.
+        if self.schema_version.is_v0() {
+            self.languages.clear();
+            self.grammars.clear();
+            self.themes.clear();
+        }
+
+        let cargo_toml_path = extension_path.join("Cargo.toml");
+        if cargo_toml_path.exists() {
+            self.lib.kind = Some(ExtensionLibraryKind::Rust);
+        }
+
+        let languages_dir = extension_path.join("languages");
+        if fs.is_dir(&languages_dir).await {
+            let mut language_dir_entries = fs
+                .read_dir(&languages_dir)
+                .await
+                .context("listing languages directory")?;
+
+            while let Some(language_dir) = language_dir_entries.next().await {
+                let language_dir = language_dir?;
+                let config_path = language_dir.join(LanguageConfig::FILE_NAME);
+                if fs.is_file(config_path.as_path()).await {
+                    let relative_language_dir = language_dir
+                        .strip_prefix(extension_path)?
+                        .to_rel_path_buf()?;
+                    if !self.languages.contains(&relative_language_dir) {
+                        self.languages.push(relative_language_dir);
+                    }
+                }
+            }
+        }
+
+        let themes_dir = extension_path.join("themes");
+        if fs.is_dir(&themes_dir).await {
+            let mut theme_dir_entries = fs
+                .read_dir(&themes_dir)
+                .await
+                .context("listing themes directory")?;
+
+            while let Some(theme_path) = theme_dir_entries.next().await {
+                let theme_path = theme_path?;
+                if theme_path.extension() == Some("json".as_ref()) {
+                    let relative_theme_path =
+                        theme_path.strip_prefix(extension_path)?.to_rel_path_buf()?;
+                    if !self.themes.contains(&relative_theme_path) {
+                        self.themes.push(relative_theme_path);
+                    }
+                }
+            }
+        }
+
+        let icon_themes_dir = extension_path.join("icon_themes");
+        if fs.is_dir(&icon_themes_dir).await {
+            let mut icon_theme_dir_entries = fs
+                .read_dir(&icon_themes_dir)
+                .await
+                .context("listing icon themes directory")?;
+
+            while let Some(icon_theme_path) = icon_theme_dir_entries.next().await {
+                let icon_theme_path = icon_theme_path?;
+                if icon_theme_path.extension() == Some("json".as_ref()) {
+                    let relative_icon_theme_path = icon_theme_path
+                        .strip_prefix(extension_path)?
+                        .to_rel_path_buf()?;
+                    if !self.icon_themes.contains(&relative_icon_theme_path) {
+                        self.icon_themes.push(relative_icon_theme_path);
+                    }
+                }
+            }
+        };
+        if self.snippets.is_none()
+            && let snippets_json_path = extension_path.join("snippets.json")
+            && fs.is_file(&snippets_json_path).await
+        {
+            self.snippets = Some("snippets.json".into());
+        }
+
+        // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
+        // the manifest using the contents of the `grammars` directory.
+        if self.schema_version.is_v0() {
+            let grammars_dir = extension_path.join("grammars");
+            if fs.is_dir(&grammars_dir).await {
+                let mut grammar_dir_entries = fs
+                    .read_dir(&grammars_dir)
+                    .await
+                    .context("listing grammars directory")?;
+
+                while let Some(grammar_path) = grammar_dir_entries.next().await {
+                    let grammar_path = grammar_path?;
+                    if grammar_path.extension() == Some("toml".as_ref()) {
+                        #[derive(Deserialize)]
+                        struct GrammarConfigToml {
+                            pub repository: String,
+                            pub commit: String,
+                            #[serde(default)]
+                            pub path: Option<String>,
+                        }
+
+                        let grammar_config = fs.load(&grammar_path).await?;
+                        let grammar_config: GrammarConfigToml = toml::from_str(&grammar_config)?;
+
+                        let grammar_name = grammar_path
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .context("no grammar name")?;
+                        if !self.grammars.contains_key(grammar_name) {
+                            self.grammars.insert(
+                                grammar_name.into(),
+                                GrammarManifestEntry {
+                                    repository: grammar_config.repository,
+                                    rev: grammar_config.commit,
+                                    path: grammar_config.path,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn manifest_from_old_manifest(
+    manifest_json: OldExtensionManifest,
+    extension_id: &str,
+) -> ExtensionManifest {
+    ExtensionManifest {
+        id: extension_id.into(),
+        name: manifest_json.name,
+        version: manifest_json.version,
+        description: manifest_json.description,
+        repository: manifest_json.repository,
+        authors: manifest_json.authors,
+        schema_version: SchemaVersion::ZERO,
+        lib: Default::default(),
+        themes: {
+            let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
+            themes.sort_unstable();
+            themes.dedup();
+            themes
+        },
+        icon_themes: Vec::new(),
+        languages: {
+            let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
+            languages.sort_unstable();
+            languages.dedup();
+            languages
+        },
+        grammars: manifest_json
+            .grammars
+            .into_keys()
+            .map(|grammar_name| (grammar_name, Default::default()))
+            .collect(),
+        language_servers: Default::default(),
+        context_servers: BTreeMap::default(),
+        slash_commands: BTreeMap::default(),
+        snippets: None,
+        capabilities: Vec::new(),
+        debug_adapters: Default::default(),
+        debug_locators: Default::default(),
+        language_model_providers: Default::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+    use util::rel_path::rel_path_buf;
+
+    use crate::ProcessExecCapability;
+
+    use super::*;
+
+    fn extension_manifest() -> ExtensionManifest {
+        ExtensionManifest {
+            id: "test".into(),
+            name: "Test".to_string(),
+            version: "1.0.0".into(),
+            schema_version: SchemaVersion::ZERO,
+            description: None,
+            repository: None,
+            authors: vec![],
+            lib: Default::default(),
+            themes: vec![],
+            icon_themes: vec![],
+            languages: vec![],
+            grammars: BTreeMap::default(),
+            language_servers: BTreeMap::default(),
+            context_servers: BTreeMap::default(),
+            slash_commands: BTreeMap::default(),
+            snippets: None,
+            capabilities: vec![],
+            debug_adapters: Default::default(),
+            debug_locators: Default::default(),
+            language_model_providers: BTreeMap::default(),
+        }
+    }
+
+    #[test]
+    fn test_build_adapter_schema_path_with_schema_path() {
+        let adapter_name = Arc::from("my_adapter");
+        let entry = DebugAdapterManifestEntry {
+            schema_path: Some(rel_path_buf("foo/bar")),
+        };
+
+        let path = build_debug_adapter_schema_path(&adapter_name, &entry).unwrap();
+        assert_eq!(path, rel_path_buf("foo/bar"));
+    }
+
+    #[test]
+    fn test_build_adapter_schema_path_without_schema_path() {
+        let adapter_name = Arc::from("my_adapter");
+        let entry = DebugAdapterManifestEntry::default();
+
+        let path = build_debug_adapter_schema_path(&adapter_name, &entry).unwrap();
+        assert_eq!(path, rel_path_buf("debug_adapter_schemas/my_adapter.json"));
+    }
+
+    #[test]
+    fn test_allow_exec_exact_match() {
+        let manifest = ExtensionManifest {
+            capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
+                command: "ls".to_string(),
+                args: vec!["-la".to_string()],
+            })],
+            ..extension_manifest()
+        };
+
+        assert!(manifest.allow_exec("ls", &["-la"]).is_ok());
+        assert!(manifest.allow_exec("ls", &["-l"]).is_err());
+        assert!(manifest.allow_exec("pwd", &[] as &[&str]).is_err());
+    }
+
+    #[test]
+    fn test_allow_exec_wildcard_arg() {
+        let manifest = ExtensionManifest {
+            capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
+                command: "git".to_string(),
+                args: vec!["*".to_string()],
+            })],
+            ..extension_manifest()
+        };
+
+        assert!(manifest.allow_exec("git", &["status"]).is_ok());
+        assert!(manifest.allow_exec("git", &["commit"]).is_ok());
+        assert!(manifest.allow_exec("git", &["status", "-s"]).is_err()); // too many args
+        assert!(manifest.allow_exec("npm", &["install"]).is_err()); // wrong command
+    }
+
+    #[test]
+    fn test_allow_exec_double_wildcard() {
+        let manifest = ExtensionManifest {
+            capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
+                command: "cargo".to_string(),
+                args: vec!["test".to_string(), "**".to_string()],
+            })],
+            ..extension_manifest()
+        };
+
+        assert!(manifest.allow_exec("cargo", &["test"]).is_ok());
+        assert!(manifest.allow_exec("cargo", &["test", "--all"]).is_ok());
+        assert!(
+            manifest
+                .allow_exec("cargo", &["test", "--all", "--no-fail-fast"])
+                .is_ok()
+        );
+        assert!(manifest.allow_exec("cargo", &["build"]).is_err()); // wrong first arg
+    }
+
+    #[test]
+    fn test_allow_exec_mixed_wildcards() {
+        let manifest = ExtensionManifest {
+            capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
+                command: "docker".to_string(),
+                args: vec!["run".to_string(), "*".to_string(), "**".to_string()],
+            })],
+            ..extension_manifest()
+        };
+
+        assert!(manifest.allow_exec("docker", &["run", "nginx"]).is_ok());
+        assert!(manifest.allow_exec("docker", &["run"]).is_err());
+        assert!(
+            manifest
+                .allow_exec("docker", &["run", "ubuntu", "bash"])
+                .is_ok()
+        );
+        assert!(
+            manifest
+                .allow_exec("docker", &["run", "alpine", "sh", "-c", "echo hello"])
+                .is_ok()
+        );
+        assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
+    }
+
+    #[test]
+    fn test_deserialize_opt_in_languages() {
+        let manifest: ExtensionManifest = toml::from_str(indoc::indoc! {r#"
+            id = "test-manifest"
+            name = "Test Manifest"
+            version = "0.0.1"
+            schema_version = 1
+
+            [language_servers.default-server]
+            languages = ["Julia"]
+
+            [language_servers.opt-in-server]
+            languages = ["Julia", "Markdown"]
+            opt_in_languages = ["Julia"]
+        "#})
+        .expect("manifest should parse");
+
+        let julia = LanguageName::new("Julia");
+        let markdown = LanguageName::new("Markdown");
+
+        let default_server =
+            &manifest.language_servers[&LanguageServerName::new_static("default-server")];
+        assert!(default_server.opt_in_languages().is_empty());
+        assert!(!default_server.is_opt_in_for(&julia));
+
+        let opt_in_server =
+            &manifest.language_servers[&LanguageServerName::new_static("opt-in-server")];
+        assert_eq!(
+            opt_in_server.languages().into_iter().collect::<Vec<_>>(),
+            vec![julia.clone(), markdown.clone()]
+        );
+        assert!(opt_in_server.is_opt_in_for(&julia));
+        assert!(!opt_in_server.is_opt_in_for(&markdown));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_deserialize_manifest_with_windows_separators() {
+        use indoc::indoc;
+
+        let content = indoc! {r#"
+            id = "test-manifest"
+            name = "Test Manifest"
+            version = "0.0.1"
+            schema_version = 0
+            languages = ["foo\\bar"]
+        "#};
+        let manifest: ExtensionManifest = toml::from_str(&content).expect("manifest should parse");
+        assert_eq!(manifest.languages, vec![rel_path_buf("foo/bar")]);
+    }
+}
+
+/// Requirements for the manifest format of the next schema version.
+///
+/// These are skipped while [`SchemaVersion::CURRENT`] is below
+/// `NEXT_SCHEMA_VERSION` and fail once it is bumped, until the manifest
+/// format has been migrated.
+#[cfg(test)]
+mod next_schema_version_tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const NEXT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
+
+    fn is_next_schema_version_supported() -> bool {
+        SchemaVersion::CURRENT >= NEXT_SCHEMA_VERSION
+    }
+
+    fn parse_manifest(language_server: &str) -> Result<ExtensionManifest, toml::de::Error> {
+        toml::from_str(&format!(
+            indoc::indoc! {r#"
+                id = "test-manifest"
+                name = "Test Manifest"
+                version = "0.0.1"
+                schema_version = {}
+
+                [language_servers.my-server]
+                {}
+            "#},
+            NEXT_SCHEMA_VERSION, language_server
+        ))
+    }
+
+    #[test]
+    fn test_language_server_languages_must_not_be_a_list() {
+        if !is_next_schema_version_supported() {
+            return;
+        }
+
+        assert!(
+            parse_manifest(indoc::indoc! {r#"
+                languages = ["Julia", "Markdown"]
+                language_ids = { Julia = "julia" }
+                opt_in_languages = ["Julia"]
+            "#})
+            .is_err(),
+            "`languages`, `language_ids` and `opt_in_languages` must be folded \
+            into a single `languages` map on schema version {NEXT_SCHEMA_VERSION}",
+        );
+    }
+
+    #[test]
+    fn test_language_server_languages_are_a_map() {
+        if !is_next_schema_version_supported() {
+            return;
+        }
+
+        let manifest = parse_manifest(indoc::indoc! {r#"
+            [language_servers.my-server.languages]
+            Julia = { language_id = "julia", enabled_by_default = false }
+            Markdown = {}
+        "#})
+        .unwrap_or_else(|error| {
+            panic!(
+                "language server languages must be a map keyed by language name \
+                on schema version {NEXT_SCHEMA_VERSION}: {error}"
+            )
+        });
+
+        let julia = LanguageName::new("Julia");
+        let markdown = LanguageName::new("Markdown");
+        let entry = &manifest.language_servers[&LanguageServerName::new_static("my-server")];
+        assert_eq!(
+            entry.languages().into_iter().collect::<Vec<_>>(),
+            vec![julia.clone(), markdown.clone()]
+        );
+        assert_eq!(
+            entry.language_ids.get(&julia).map(String::as_str),
+            Some("julia")
+        );
+        assert!(entry.is_opt_in_for(&julia));
+        assert!(!entry.is_opt_in_for(&markdown));
+    }
+}

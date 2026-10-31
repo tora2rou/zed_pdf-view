@@ -1,4 +1,27 @@
-# zed_pdf-view
+# Tuzuri
+組版用のエディタ。[Zed](https://github.com/zed-industries/zed) のforkに、PDFビューア(Chihayaburu)を組み込んだもの。
+
+- Zed本体はリポジトリの直下(`crates/zed` など)。Zed の README は [README.zed.md](README.zed.md)。
+- Chihayaburuのcrate: `crates/pdf_core` / `crates/pdf_viewer` / `crates/pdf_view_app` / `crates/typst_build`
+- 元にしたZedのコミット: `fae8a35` (2026-10-20)。上流の更新は `git fetch zed main` してmergeする。
+
+## ライセンス
+Zed本体のcrateの多くは GPL-3.0-or-later (`LICENSE-GPL`)、gpuiなどは Apache-2.0 (`LICENSE-APACHE`)。
+Chihayaburuのcrateは Apache-2.0。これらを1つにまとめたTuzuriの実行ファイルにはGPL-3.0の条件がかかる。
+
+## ビルドと実行
+```sh
+# Tuzuri (Zed本体)
+cargo run -p zed
+
+# Chihayaburu単体のビューア
+cargo run --release -p pdf_view_app -- path/to/file.pdf
+```
+Linuxで必要なパッケージは `script/linux` (Zedのスクリプト) で入れられる。
+
+---
+
+# Chihayaburu (旧 zed_pdf-view)
 Zed用のpdf表示の拡張機能
 
 ## ビルド

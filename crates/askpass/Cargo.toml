@@ -1,0 +1,33 @@
+[package]
+name = "askpass"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/askpass.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+gpui.workspace = true
+net.workspace = true
+smol.workspace = true
+log.workspace = true
+tempfile.workspace = true
+util.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+which.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = ["Win32_Security_Cryptography"] }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
