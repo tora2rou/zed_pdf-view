@@ -60,7 +60,11 @@ jobs:
             echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
 
+      # Like Zed's own Linux build, use clang: GCC 11 (the default c++ here) rejects WebRTC's headers.
       - name: Build
+        env:
+          CC: clang
+          CXX: clang++
         run: cargo --config .cargo/bundle-config.toml build --release --locked -p zed
 
       - name: Package
