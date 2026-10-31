@@ -24200,6 +24200,7 @@ dependencies = [
  "outline_panel",
  "parking_lot",
  "paths",
+ "pdf_tab",
  "picker",
  "pkg-config",
  "pretty_assertions",
