@@ -36,6 +36,11 @@ env:
   SCCACHE_GHA_ENABLED: 'true'
   # A cache that cannot be reached must not fail the build; it just compiles.
   SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
+  # The C++ compile and the final link go longer than sccache's default 10 minutes without a
+  # request; keep it running so its statistics cover the whole build.
+  SCCACHE_IDLE_TIMEOUT: '0'
+  # The cache holds only sccache's results (the repository's cache is limited to 10GB);
+  # downloading the crates' sources again takes only a minute or two.
 
 jobs:
   linux:
@@ -61,11 +66,6 @@ jobs:
             libasound2-dev libfontconfig-dev libfreetype-dev libgit2-dev libglib2.0-dev \
             libssl-dev libsqlite3-dev libstdc++-12-dev libva-dev libvulkan-dev libwayland-dev \
             libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libzstd-dev
-
-      # The downloaded crates; compiled crates are cached by sccache below.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-targets: false
 
       - uses: mozilla-actions/sccache-action@v0.0.11
 
@@ -120,10 +120,6 @@ jobs:
         run: git config --system core.longpaths true
 
       - uses: actions/checkout@v4
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-targets: false
 
       - uses: mozilla-actions/sccache-action@v0.0.11
 
