@@ -6,6 +6,15 @@
 - Zedへの組み込み用のcrate: `crates/pdf_tab` (PDFのタブ) / `crates/typst_ui` (Typstのプレビューとデバッグパネル)
 - 元にしたZedのコミット: `fae8a35` (2026-10-20)。上流の更新は `git fetch zed main` してmergeする。
 
+## ダウンロード
+[Releases](https://github.com/tora2rou/zed_pdf-view/releases) から、Linux (`tuzuri-<版>-linux-x86_64.tar.gz`) と
+Windows (`tuzuri-<版>-windows-x64.zip`) を取れる。
+- Linux: 展開して `./install.sh` (既定は `~/.local` に入る。`./uninstall.sh` で消せる)。
+- Windows: 展開した `tuzuri.exe` をそのまま起動する。
+
+作り方: `v0.1.0` のようなタグをpushすると、GitHub Actions (`.github/workflows/release.yml`) が
+ビルドしてReleaseに添付する。配布版は自動更新を止めてある (本家のZedで上書きされない)。
+
 ## ライセンス
 Zed本体のcrateの多くは GPL-3.0-or-later (`LICENSE-GPL`)、gpuiなどは Apache-2.0 (`LICENSE-APACHE`)。
 Chihayaburuのcrateは Apache-2.0。これらを1つにまとめたTuzuriの実行ファイルにはGPL-3.0の条件がかかる。
