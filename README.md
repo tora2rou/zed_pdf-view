@@ -24,7 +24,8 @@ cargo run --release -p pdf_view_app -- path/to/file.pdf
 Linuxで必要なパッケージは `script/linux` (Zedのスクリプト) で入れられる (cmakeも必要)。
 
 - `.pdf` はZedのタブで開き、表示にはChihayaburuの `PdfView` を使う (`crates/pdf_tab`)。キー操作は `assets/keymaps/default-*.json` の `PdfViewer`。
-- `.typ` を編集中に `Ctrl+K V` (macOSは `Cmd+K V`) で、横にライブプレビューを開く (`Ctrl+Shift+V` は同じペイン)。
+- `.typ` を編集中に、エディタ右上の目のアイコンか `Ctrl+K V` (macOSは `Cmd+K V`) で、横にライブプレビューを開く
+  (Alt+クリックか `Ctrl+Shift+V` は同じペイン)。
   編集が0.3秒止まるたびに、保存していない内容でコンパイルして表示を更新する (`crates/typst_ui`)。
   プレビューを `Ctrl+クリック` (macOSは `Cmd+クリック`) すると、エディタのカーソルが該当するソースの行へ移る。
 - デバッグモード: ステータスバーの警告アイコン (またはコマンドパレットの `typst: toggle diagnostics panel`) で
