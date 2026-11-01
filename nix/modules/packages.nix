@@ -8,13 +8,13 @@
       ...
     }:
     let
-      mkZed = import ../toolchain.nix { inherit inputs; };
-      zed-editor = mkZed pkgs;
+      mkTuzuri = import ../toolchain.nix { inherit inputs; };
+      tuzuri = mkTuzuri pkgs;
     in
     {
       packages = {
-        default = zed-editor;
-        debug = zed-editor.override { profile = "dev"; };
+        default = tuzuri;
+        debug = tuzuri.override { profile = "dev"; };
       };
     }
     // lib.optionalAttrs (lib.hasSuffix "linux" system) {
