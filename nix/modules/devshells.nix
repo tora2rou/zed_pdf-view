@@ -5,8 +5,8 @@
     let
       # NOTE: Duplicated because this is in a separate flake-parts partition
       # than ./packages.nix
-      mkZed = import ../toolchain.nix { inherit inputs; };
-      zed-editor = mkZed pkgs;
+      mkTuzuri = import ../toolchain.nix { inherit inputs; };
+      tuzuri = mkTuzuri pkgs;
 
       # mdBook pinned to 0.4.40 via a dedicated nixpkgs input, because the docs
       # rely on behavior that newer mdBook releases break (see
@@ -19,18 +19,18 @@
       # the `MDBOOK_*` env vars below so `mdbook build docs` doesn't have to
       # compile the preprocessor on every run.
       #
-      # We reuse `zed-editor`'s crane builder and shared arguments (exposed via
+      # We reuse `tuzuri`'s crane builder and shared arguments (exposed via
       # `passthru`) rather than `overrideAttrs`, because crane bakes
       # `cargoExtraArgs` into the build command at evaluation time.
-      docs-preprocessor = zed-editor.passthru.craneLib.buildPackage (
-        zed-editor.passthru.commonArgs
+      docs-preprocessor = tuzuri.passthru.craneLib.buildPackage (
+        tuzuri.passthru.commonArgs
         // {
-          inherit (zed-editor.passthru) cargoArtifacts;
-          pname = "zed-docs-preprocessor";
+          inherit (tuzuri.passthru) cargoArtifacts;
+          pname = "tuzuri-docs-preprocessor";
           cargoExtraArgs = "-p docs_preprocessor --locked";
           dontUseCmakeConfigure = true;
           meta = {
-            description = "mdBook preprocessor and postprocessor for the Zed docs";
+            description = "mdBook preprocessor and postprocessor for the Tuzuri docs";
             mainProgram = "docs_preprocessor";
           };
         }
@@ -40,7 +40,7 @@
       rustToolchain = rustBin.fromRustupToolchainFile ../../rust-toolchain.toml;
 
       baseEnv =
-        (zed-editor.overrideAttrs (attrs: {
+        (tuzuri.overrideAttrs (attrs: {
           passthru.env = attrs.env;
         })).env; # exfil `env`; it's not in drvAttrs
 
@@ -61,9 +61,9 @@
       };
     in
     {
-      devShells.default = (pkgs.mkShell.override { inherit (zed-editor) stdenv; }) {
-        name = "zed-editor-dev";
-        inputsFrom = [ zed-editor ];
+      devShells.default = (pkgs.mkShell.override { inherit (tuzuri) stdenv; }) {
+        name = "tuzuri-dev";
+        inputsFrom = [ tuzuri ];
 
         packages =
           with pkgs;
@@ -77,7 +77,7 @@
             # TODO: package protobuf-language-server for editing zed.proto
             # TODO: add other tools used in our scripts
 
-            # `build.nix` adds this to the `zed-editor` wrapper (see `postFixup`)
+            # `build.nix` adds this to the `tuzuri` wrapper (see `postFixup`)
             # we'll just put it on `$PATH`:
             nodejs_22
             zig
