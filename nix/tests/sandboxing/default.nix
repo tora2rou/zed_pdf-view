@@ -80,7 +80,7 @@ let
   # `/tmp` (which the restricted-fs sandbox masks with a tmpfs, hiding anything
   # there), so it stays visible inside the sandbox and the block is what's
   # actually under test.
-  unixSocketPath = "/run/zed-sandbox-test.sock";
+  unixSocketPath = "/run/tuzuri-sandbox-test.sock";
 
   # Quiet boot + a couple of cores; shared by every machine-under-test.
   baseMachine = {
